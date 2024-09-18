@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_bluetooth/ble_controller.dart';
 import 'package:flutter_blue/flutter_blue.dart';
+import 'package:flutter_bluetooth/ble_controller.dart';
 import 'package:get/get.dart';
+import 'device_data_screen.dart'; // Import your new DeviceDataScreen file
 
 void main() {
   runApp(const MyApp());
@@ -12,7 +13,7 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    return GetMaterialApp(
       title: 'Flutter Demo',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
@@ -37,6 +38,7 @@ class MyHomePage extends StatelessWidget {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
+                // Device Scanning Section
                 Expanded(
                   child: StreamBuilder<List<ScanResult>>(
                     stream: controller.scanResults,
@@ -50,10 +52,21 @@ class MyHomePage extends StatelessWidget {
                             return Card(
                               elevation: 2,
                               child: ListTile(
-                                title: Text(data.device.name),
+                                title: Text(
+                                  data.device.name.isNotEmpty ? data.device.name : "Unnamed Device",
+                                ),
                                 subtitle: Text(data.device.id.id),
                                 trailing: Text(data.rssi.toString()),
-                                onTap: () => controller.connectToDevice(data.device),
+
+                                // onTap logic to connect only to ATMOTUBE by name
+                                onTap: () {
+                                  if (data.device.name == "ATMOTUBE") {
+                                    controller.connectToDevice(data.device, context);
+                                    Get.to(() => DeviceDataScreen(controller: controller)); // Navigate to DeviceDataScreen
+                                  } else {
+                                    controller.connectToDevice(data.device, context);
+                                  }
+                                },
                               ),
                             );
                           },

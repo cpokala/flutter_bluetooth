@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter_blue/flutter_blue.dart';
 import 'package:get/get.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -8,11 +9,20 @@ class BleController extends GetxController {
   FlutterBlue ble = FlutterBlue.instance;
   BluetoothDevice? connectedDevice;
   var logger = Logger();
+
+  // Observable variables for real-time data
   var airQualityVOC = RxString('');
   var temperature = RxDouble(0.0);
   var humidity = RxDouble(0.0);
   var batteryLevel = RxInt(0);
   var pmDetails = RxMap<String, double>();
+  var pressure = RxDouble(0.0);
+
+  // Historical data for line charts
+  var vocData = <double>[].obs;
+  var tempData = <double>[].obs;
+  var humidityData = <double>[].obs;
+  var pressureData = <double>[].obs;
 
   final _scanResultsController = StreamController<List<ScanResult>>.broadcast();
   Stream<List<ScanResult>> get scanResults => _scanResultsController.stream;
@@ -26,26 +36,27 @@ class BleController extends GetxController {
   }
 
   Future<void> scanDevices() async {
-    if (await Permission.bluetoothScan.request().isGranted) {
-      if (await Permission.bluetoothConnect.request().isGranted) {
-        if (await ble.isScanning.first) {
-          return;
-        }
-
-        _scanResultsList.clear();
-
-        ble.scan(timeout: const Duration(seconds: 50)).listen((result) {
-          _scanResultsList.add(result);
-          _scanResultsController.add(_scanResultsList);
-        });
-
-        await Future.delayed(const Duration(seconds: 50));
-        ble.stopScan();
+    if (await Permission.bluetoothScan.request().isGranted &&
+        await Permission.bluetoothConnect.request().isGranted &&
+        await Permission.bluetooth.request().isGranted) {
+      if (await ble.isScanning.first) {
+        return;
       }
+
+      _scanResultsList.clear();
+      ble.scan(timeout: const Duration(seconds: 50)).listen((result) {
+        _scanResultsList.add(result);
+        _scanResultsController.add(_scanResultsList);
+      });
+
+      await Future.delayed(const Duration(seconds: 50));
+      ble.stopScan();
+    } else {
+      logger.e("Required permissions not granted.");
     }
   }
 
-  Future<void> connectToDevice(BluetoothDevice device) async {
+  Future<void> connectToDevice(BluetoothDevice device, BuildContext context) async {
     connectedDevice = device;
     var currentState = await device.state.first;
     if (currentState != BluetoothDeviceState.connected) {
@@ -80,10 +91,10 @@ class BleController extends GetxController {
       );
       if (service != null) {
         logger.d("Service discovered: ${service.uuid}");
-        subscribeToCharacteristic(service, "db450002-8e9a-4818-add7-6ed94a328ab4".toLowerCase(), _updateAirQuality);
-        subscribeToCharacteristic(service, "db450003-8e9a-4818-add7-6ed94a328ab4".toLowerCase(), _updateEnvironmental);
-        subscribeToCharacteristic(service, "db450004-8e9a-4818-add7-6ed94a328ab4".toLowerCase(), _updateStatus);
-        subscribeToCharacteristic(service, "db450005-8e9a-4818-add7-6ed94a328ab4".toLowerCase(), _updatePM);
+        subscribeToCharacteristic(service, "db450002-8e9a-4818-add7-6ed94a328ab4", _updateAirQuality);
+        subscribeToCharacteristic(service, "db450003-8e9a-4818-add7-6ed94a328ab4", _updateEnvironmental);
+        subscribeToCharacteristic(service, "db450004-8e9a-4818-add7-6ed94a328ab4", _updateStatus);
+        subscribeToCharacteristic(service, "db450005-8e9a-4818-add7-6ed94a328ab4", _updatePM);
       } else {
         logger.w("Service not found");
       }
@@ -125,7 +136,9 @@ class BleController extends GetxController {
     if (value.length == 4) {
       final voc = (value[0] << 8) | value[1];
       airQualityVOC.value = "VOC: $voc ppb";
-      logger.d("VOC: ${airQualityVOC.value}");
+
+      if (vocData.length >= 50) vocData.removeAt(0);
+      vocData.add(voc.toDouble());
     } else {
       logger.e("Invalid Air Quality Data Length: ${value.length}");
     }
@@ -138,9 +151,17 @@ class BleController extends GetxController {
       int temp = value[1];
       int extendedTemp = (value[6] << 8) | value[7];
       temperature.value = temp + extendedTemp / 100.0;
-      // Pressure data is 4 bytes, need to handle properly if needed
-      logger.d("Temperature: ${temperature.value}");
-      logger.d("Humidity: ${humidity.value}");
+      pressure.value = ((value[2] << 24) | (value[3] << 16) | (value[4] << 8) | value[5]) as double;
+
+      // Update chart data
+      if (tempData.length >= 50) tempData.removeAt(0);
+      tempData.add(temperature.value);
+
+      if (humidityData.length >= 50) humidityData.removeAt(0);
+      humidityData.add(humidity.value);
+
+      if (pressureData.length >= 50) pressureData.removeAt(0);
+      pressureData.add(pressure.value);
     } else {
       logger.e("Invalid Environmental Data Length: ${value.length}");
     }
