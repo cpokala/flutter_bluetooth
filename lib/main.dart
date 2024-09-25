@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_blue/flutter_blue.dart';
-import 'package:flutter_bluetooth/ble_controller.dart';
 import 'package:get/get.dart';
-import 'device_data_screen.dart'; // Import your new DeviceDataScreen file
+import 'package:flutter_blue/flutter_blue.dart';
+import 'ble_controller.dart'; // Import your updated BleController
+import 'device_data_screen.dart'; // Import your DeviceDataScreen
 
 void main() {
   runApp(const MyApp());
@@ -14,7 +14,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GetMaterialApp(
-      title: 'Flutter Demo',
+      title: 'Flutter BLE Demo',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
@@ -32,7 +32,7 @@ class MyHomePage extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: const Text("BLE SCANNER")),
       body: GetBuilder<BleController>(
-        init: BleController(),
+        init: BleController(), // Initialize the BleController
         builder: (controller) {
           return Center(
             child: Column(

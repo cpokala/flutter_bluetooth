@@ -11,7 +11,7 @@ class BleController extends GetxController {
   var logger = Logger();
 
   // Observable variables for real-time data
-  var airQualityVOC = RxString('');
+  var airQualityVOC = RxString('VOC: 0 ppb');
   var temperature = RxDouble(0.0);
   var humidity = RxDouble(0.0);
   var batteryLevel = RxInt(0);
