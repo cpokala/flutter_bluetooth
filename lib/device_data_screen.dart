@@ -3,10 +3,43 @@ import 'package:get/get.dart';
 import 'package:syncfusion_flutter_charts/charts.dart';
 import 'ble_controller.dart'; // Import your BLE controller
 
-class DeviceDataScreen extends StatelessWidget {
+class DeviceDataScreen extends StatefulWidget {
   final BleController controller;
 
   const DeviceDataScreen({required this.controller, super.key});
+
+  @override
+  DeviceDataScreenState createState() => DeviceDataScreenState();
+}
+
+class DeviceDataScreenState extends State<DeviceDataScreen> {
+  late ZoomPanBehavior _zoomPanBehaviorVOC;
+  late ZoomPanBehavior _zoomPanBehaviorTemp;
+  late ZoomPanBehavior _zoomPanBehaviorHumidity;
+
+  @override
+  void initState() {
+    // Initialize ZoomPanBehavior with pinch zoom enabled for each chart
+    _zoomPanBehaviorVOC = ZoomPanBehavior(
+      enablePinching: true,
+      enablePanning: true,
+      zoomMode: ZoomMode.xy,
+    );
+
+    _zoomPanBehaviorTemp = ZoomPanBehavior(
+      enablePinching: true,
+      enablePanning: true,
+      zoomMode: ZoomMode.xy,
+    );
+
+    _zoomPanBehaviorHumidity = ZoomPanBehavior(
+      enablePinching: true,
+      enablePanning: true,
+      zoomMode: ZoomMode.xy,
+    );
+
+    super.initState();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -19,7 +52,7 @@ class DeviceDataScreen extends StatelessWidget {
           children: [
             // VOC level section
             Obx(() {
-              final vocValue = controller.airQualityVOC.value;
+              final vocValue = widget.controller.airQualityVOC.value;
               return Padding(
                 padding: const EdgeInsets.all(8.0),
                 child: Text("VOC Level: $vocValue",
@@ -28,7 +61,7 @@ class DeviceDataScreen extends StatelessWidget {
             }),
             const SizedBox(height: 20),
 
-            // VOC Line Chart with Syncfusion
+            // VOC Line Chart with Syncfusion and pinch zoom enabled
             Obx(() {
               return SizedBox(
                 height: 300,
@@ -41,7 +74,7 @@ class DeviceDataScreen extends StatelessWidget {
                   ),
                   series: <LineSeries<double, double>>[
                     LineSeries<double, double>(
-                      dataSource: controller.vocData.toList(),
+                      dataSource: widget.controller.vocData.toList(),
                       xValueMapper: (double voc, int index) => index.toDouble(),
                       yValueMapper: (double voc, int index) => voc,
                       name: 'VOC',
@@ -52,6 +85,7 @@ class DeviceDataScreen extends StatelessWidget {
                   title: const ChartTitle(text: 'VOC Levels Over Time'),
                   legend: const Legend(isVisible: true),
                   tooltipBehavior: TooltipBehavior(enable: true),
+                  zoomPanBehavior: _zoomPanBehaviorVOC, // Enable pinch zoom and panning
                 ),
               );
             }),
@@ -60,12 +94,12 @@ class DeviceDataScreen extends StatelessWidget {
 
             // Temperature Section
             Obx(() {
-              return Text("Temperature: ${controller.temperature.value} °C",
+              return Text("Temperature: ${widget.controller.temperature.value} °C",
                   style: const TextStyle(fontSize: 18));
             }),
             const SizedBox(height: 20),
 
-            // Temperature Line Chart
+            // Temperature Line Chart with Syncfusion and pinch zoom enabled
             Obx(() {
               return SizedBox(
                 height: 300,
@@ -78,7 +112,7 @@ class DeviceDataScreen extends StatelessWidget {
                   ),
                   series: <LineSeries<double, double>>[
                     LineSeries<double, double>(
-                      dataSource: controller.tempData.toList(),
+                      dataSource: widget.controller.tempData.toList(),
                       xValueMapper: (double temp, int index) => index.toDouble(),
                       yValueMapper: (double temp, int index) => temp,
                       name: 'Temperature',
@@ -89,6 +123,7 @@ class DeviceDataScreen extends StatelessWidget {
                   title: const ChartTitle(text: 'Temperature Over Time'),
                   legend: const Legend(isVisible: true),
                   tooltipBehavior: TooltipBehavior(enable: true),
+                  zoomPanBehavior: _zoomPanBehaviorTemp, // Enable pinch zoom and panning
                 ),
               );
             }),
@@ -97,12 +132,12 @@ class DeviceDataScreen extends StatelessWidget {
 
             // Humidity Section
             Obx(() {
-              return Text("Humidity: ${controller.humidity.value} %",
+              return Text("Humidity: ${widget.controller.humidity.value} %",
                   style: const TextStyle(fontSize: 18));
             }),
             const SizedBox(height: 20),
 
-            // Humidity Line Chart
+            // Humidity Line Chart with Syncfusion and pinch zoom enabled
             Obx(() {
               return SizedBox(
                 height: 300,
@@ -115,7 +150,7 @@ class DeviceDataScreen extends StatelessWidget {
                   ),
                   series: <LineSeries<double, double>>[
                     LineSeries<double, double>(
-                      dataSource: controller.humidityData.toList(),
+                      dataSource: widget.controller.humidityData.toList(),
                       xValueMapper: (double humidity, int index) =>
                           index.toDouble(),
                       yValueMapper: (double humidity, int index) => humidity,
@@ -127,6 +162,7 @@ class DeviceDataScreen extends StatelessWidget {
                   title: const ChartTitle(text: 'Humidity Over Time'),
                   legend: const Legend(isVisible: true),
                   tooltipBehavior: TooltipBehavior(enable: true),
+                  zoomPanBehavior: _zoomPanBehaviorHumidity, // Enable pinch zoom and panning
                 ),
               );
             }),
