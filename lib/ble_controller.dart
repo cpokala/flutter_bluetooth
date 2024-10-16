@@ -129,22 +129,22 @@ class BleController extends GetxController {
     }
   }
 
-  // Corrected Air Quality (VOC) update method based on sensor's 2-byte value
+  // Adjusted Air Quality (VOC) update method based on sensor's 2-byte value with scaling
   void _updateAirQuality(List<int> value) {
     logger.d("Air Quality data received: $value");
     if (value.length == 4) {
       // VOC is in the first 2 bytes (16-bit value)
       final voc = (value[0] << 8) | value[1];
-      airQualityVOC.value = "VOC: $voc ppb";
+      airQualityVOC.value = "VOC: ${(voc / 10).toStringAsFixed(2)} ppb";  // Adjusted scaling by dividing by 10
 
       if (vocData.length >= 50) vocData.removeAt(0);
-      vocData.add(voc.toDouble());
+      vocData.add((voc / 10).toDouble());
     } else {
       logger.e("Invalid Air Quality Data Length: ${value.length}");
     }
   }
 
-  // Corrected Environmental update method
+  // Adjusted Environmental update method with scaling for temperature and pressure
   void _updateEnvironmental(List<int> value) {
     logger.d("Environmental data received: $value");
     if (value.length == 8) {
@@ -154,7 +154,7 @@ class BleController extends GetxController {
       // Temperature is 1 byte, extended temperature is 2 bytes
       int temp = value[1];
       int extendedTemp = (value[6] << 8) | value[7];  // Combine 2 bytes for extended temperature
-      temperature.value = temp + extendedTemp / 100.0;  // Combine main and extended temperatures
+      temperature.value = (temp + extendedTemp / 100.0) / 10.0;  // Adjusted temperature scaling
 
       // Pressure is 4 bytes (big-endian), divide by 100 for hPa
       pressure.value = ((value[2] << 24) | (value[3] << 16) | (value[4] << 8) | value[5]) / 100.0;
