@@ -20,8 +20,8 @@ dependencies:
   collection: ^1.15.0
   fl_chart: ^0.69.0
   syncfusion_flutter_charts: ^27.1.50
-  
-  
+
+
   flutter_localizations:
     sdk: flutter
 

@@ -28,10 +28,12 @@ class BleController extends GetxController {
   Stream<List<ScanResult>> get scanResults => _scanResultsController.stream;
 
   final List<ScanResult> _scanResultsList = [];
+  Timer? pollingTimer;
 
   @override
   void onClose() {
     _scanResultsController.close();
+    pollingTimer?.cancel();  // Stop the polling when the controller is closed
     super.onClose();
   }
 
@@ -74,60 +76,56 @@ class BleController extends GetxController {
         logger.d("Device connecting to: ${device.name}");
       } else if (state == BluetoothDeviceState.connected) {
         logger.i("Device connected: ${device.name}");
-        setupListeners();
+        startPolling();  // Start polling when the device is connected
       } else {
         logger.w("Device Disconnected");
+        stopPolling();
       }
     });
   }
 
-  void setupListeners() {
-    logger.d("Setting up listeners");
-    connectedDevice?.discoverServices().then((services) {
-      logDiscoveredServices(services);
-
-      final service = services.firstWhereOrNull(
-            (s) => s.uuid.toString().toLowerCase() == "db450001-8e9a-4818-add7-6ed94a328ab4".toLowerCase(),
-      );
-      if (service != null) {
-        logger.d("Service discovered: ${service.uuid}");
-        subscribeToCharacteristic(service, "db450002-8e9a-4818-add7-6ed94a328ab4", _updateAirQuality);
-        subscribeToCharacteristic(service, "db450003-8e9a-4818-add7-6ed94a328ab4", _updateEnvironmental);
-        subscribeToCharacteristic(service, "db450004-8e9a-4818-add7-6ed94a328ab4", _updateStatus);
-        subscribeToCharacteristic(service, "db450005-8e9a-4818-add7-6ed94a328ab4", _updatePM);
-      } else {
-        logger.w("Service not found");
-      }
-    }).catchError((error) {
-      logger.e("Error discovering services: $error");
+  void startPolling() {
+    pollingTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+      logger.d("Polling data from BLE device...");
+      pollDeviceForData();
     });
   }
 
-  void logDiscoveredServices(List<BluetoothService> services) {
-    for (var service in services) {
-      logger.d("Service discovered: ${service.uuid}");
+  void stopPolling() {
+    pollingTimer?.cancel();
+    logger.d("Stopped polling.");
+  }
+
+  Future<void> pollDeviceForData() async {
+    if (connectedDevice == null) return;
+
+    List<BluetoothService> services = await connectedDevice?.discoverServices() ?? [];
+
+    final service = services.firstWhereOrNull(
+          (s) => s.uuid.toString().toLowerCase() == "db450001-8e9a-4818-add7-6ed94a328ab4".toLowerCase(),
+    );
+
+    if (service != null) {
+      await readCharacteristic(service, "db450002-8e9a-4818-add7-6ed94a328ab4", _updateAirQuality);
+      await readCharacteristic(service, "db450003-8e9a-4818-add7-6ed94a328ab4", _updateEnvironmental);
+      await readCharacteristic(service, "db450004-8e9a-4818-add7-6ed94a328ab4", _updateStatus);
+      await readCharacteristic(service, "db450005-8e9a-4818-add7-6ed94a328ab4", _updatePM);
+    } else {
+      logger.w("Service not found for polling");
     }
   }
 
-  void subscribeToCharacteristic(BluetoothService service, String charUuid, Function(List<int>) handler) {
+  Future<void> readCharacteristic(BluetoothService service, String charUuid, Function(List<int>) handler) async {
     final characteristic = service.characteristics.firstWhereOrNull(
           (c) => c.uuid.toString().toLowerCase() == charUuid,
     );
-    if (characteristic != null && characteristic.properties.notify) {
-      logger.d("Subscribing to characteristic: ${characteristic.uuid}");
-      characteristic.setNotifyValue(true).then((_) {
-        logger.d("Notification set for characteristic: $charUuid");
-        characteristic.value.listen((value) {
-          logger.d("Data received for characteristic: $charUuid, Data: $value");
-          handler(value);
-        }).onError((error) {
-          logger.e("Error listening to characteristic: $charUuid, error: $error");
-        });
-      }).catchError((error) {
-        logger.e("Error setting notify value for characteristic: $charUuid, error: $error");
-      });
+
+    if (characteristic != null && characteristic.properties.read) {
+      List<int> value = await characteristic.read();
+      logger.d("Data read for characteristic: $charUuid, Data: $value");
+      handler(value);
     } else {
-      logger.w("Characteristic not found or notify not supported: $charUuid");
+      logger.w("Characteristic not found or read not supported: $charUuid");
     }
   }
 
