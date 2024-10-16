@@ -149,7 +149,7 @@ class BleController extends GetxController {
       int temp = value[1];
       int extendedTemp = (value[6] << 8) | value[7];
       temperature.value = temp + extendedTemp / 100.0;
-      pressure.value = ((value[2] << 24) | (value[3] << 16) | (value[4] << 8) | value[5]) as double;
+      pressure.value = (value[2] << 24 | value[3] << 16 | value[4] << 8 | value[5]).toDouble();
 
       // Update chart data
       if (tempData.length >= 50) tempData.removeAt(0);
