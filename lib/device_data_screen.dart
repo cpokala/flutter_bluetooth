@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:syncfusion_flutter_charts/charts.dart';
-import 'ble_controller.dart'; // Import your BLE controller
+import 'ble_controller.dart';
 
 class DeviceDataScreen extends StatefulWidget {
   final BleController controller;
@@ -19,7 +19,6 @@ class DeviceDataScreenState extends State<DeviceDataScreen> {
 
   @override
   void initState() {
-    // Initialize ZoomPanBehavior with pinch zoom enabled for each chart
     _zoomPanBehaviorVOC = ZoomPanBehavior(
       enablePinching: true,
       enablePanning: true,
@@ -41,6 +40,35 @@ class DeviceDataScreenState extends State<DeviceDataScreen> {
     super.initState();
   }
 
+  Widget _buildClusterCard(int clusterId, List<EnvironmentalDataPoint> points) {
+    double avgVoc = points.isEmpty ? 0 : points.map((p) => p.voc).reduce((a, b) => a + b) / points.length;
+    double avgTemp = points.isEmpty ? 0 : points.map((p) => p.temperature).reduce((a, b) => a + b) / points.length;
+    double avgHumidity = points.isEmpty ? 0 : points.map((p) => p.humidity).reduce((a, b) => a + b) / points.length;
+    double avgPressure = points.isEmpty ? 0 : points.map((p) => p.pressure).reduce((a, b) => a + b) / points.length;
+
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      child: ExpansionTile(
+        title: Text('Cluster $clusterId'),
+        subtitle: Text('${points.length} points'),
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Average VOC: ${avgVoc.toStringAsFixed(2)} ppb'),
+                Text('Average Temperature: ${avgTemp.toStringAsFixed(2)} °C'),
+                Text('Average Humidity: ${avgHumidity.toStringAsFixed(2)} %'),
+                Text('Average Pressure: ${avgPressure.toStringAsFixed(2)} hPa'),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -59,9 +87,55 @@ class DeviceDataScreenState extends State<DeviceDataScreen> {
                     style: const TextStyle(fontSize: 18)),
               );
             }),
+
+            // Cluster Analysis Section
+            Card(
+              margin: const EdgeInsets.all(8.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Cluster Analysis',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.refresh),
+                          onPressed: () => widget.controller.runDBSCANAnalysis(),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Obx(() {
+                    if (widget.controller.clusterResults.isEmpty) {
+                      return const Padding(
+                        padding: EdgeInsets.all(16.0),
+                        child: Text(
+                          'Collecting data for clustering analysis...',
+                          style: TextStyle(fontStyle: FontStyle.italic),
+                        ),
+                      );
+                    }
+                    return Column(
+                      children: widget.controller.clusterResults.entries
+                          .map((entry) => _buildClusterCard(entry.key, entry.value))
+                          .toList(),
+                    );
+                  }),
+                ],
+              ),
+            ),
+
             const SizedBox(height: 20),
 
-            // VOC Line Chart with Syncfusion and pinch zoom enabled
+            // VOC Line Chart
             Obx(() {
               return SizedBox(
                 height: 300,
@@ -78,14 +152,13 @@ class DeviceDataScreenState extends State<DeviceDataScreen> {
                       xValueMapper: (double voc, int index) => index.toDouble(),
                       yValueMapper: (double voc, int index) => voc,
                       name: 'VOC',
-                      dataLabelSettings:
-                      const DataLabelSettings(isVisible: true),
+                      dataLabelSettings: const DataLabelSettings(isVisible: true),
                     ),
                   ],
                   title: const ChartTitle(text: 'VOC Levels Over Time'),
                   legend: const Legend(isVisible: true),
                   tooltipBehavior: TooltipBehavior(enable: true),
-                  zoomPanBehavior: _zoomPanBehaviorVOC, // Enable pinch zoom and panning
+                  zoomPanBehavior: _zoomPanBehaviorVOC,
                 ),
               );
             }),
@@ -99,7 +172,7 @@ class DeviceDataScreenState extends State<DeviceDataScreen> {
             }),
             const SizedBox(height: 20),
 
-            // Temperature Line Chart with Syncfusion and pinch zoom enabled
+            // Temperature Chart
             Obx(() {
               return SizedBox(
                 height: 300,
@@ -116,14 +189,13 @@ class DeviceDataScreenState extends State<DeviceDataScreen> {
                       xValueMapper: (double temp, int index) => index.toDouble(),
                       yValueMapper: (double temp, int index) => temp,
                       name: 'Temperature',
-                      dataLabelSettings:
-                      const DataLabelSettings(isVisible: true),
+                      dataLabelSettings: const DataLabelSettings(isVisible: true),
                     ),
                   ],
                   title: const ChartTitle(text: 'Temperature Over Time'),
                   legend: const Legend(isVisible: true),
                   tooltipBehavior: TooltipBehavior(enable: true),
-                  zoomPanBehavior: _zoomPanBehaviorTemp, // Enable pinch zoom and panning
+                  zoomPanBehavior: _zoomPanBehaviorTemp,
                 ),
               );
             }),
@@ -137,7 +209,7 @@ class DeviceDataScreenState extends State<DeviceDataScreen> {
             }),
             const SizedBox(height: 20),
 
-            // Humidity Line Chart with Syncfusion and pinch zoom enabled
+            // Humidity Chart
             Obx(() {
               return SizedBox(
                 height: 300,
@@ -151,18 +223,16 @@ class DeviceDataScreenState extends State<DeviceDataScreen> {
                   series: <LineSeries<double, double>>[
                     LineSeries<double, double>(
                       dataSource: widget.controller.humidityData.toList(),
-                      xValueMapper: (double humidity, int index) =>
-                          index.toDouble(),
+                      xValueMapper: (double humidity, int index) => index.toDouble(),
                       yValueMapper: (double humidity, int index) => humidity,
                       name: 'Humidity',
-                      dataLabelSettings:
-                      const DataLabelSettings(isVisible: true),
+                      dataLabelSettings: const DataLabelSettings(isVisible: true),
                     ),
                   ],
                   title: const ChartTitle(text: 'Humidity Over Time'),
                   legend: const Legend(isVisible: true),
                   tooltipBehavior: TooltipBehavior(enable: true),
-                  zoomPanBehavior: _zoomPanBehaviorHumidity, // Enable pinch zoom and panning
+                  zoomPanBehavior: _zoomPanBehaviorHumidity,
                 ),
               );
             }),

@@ -4,6 +4,99 @@ import 'package:get/get.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:logger/logger.dart';
 import 'dart:async';
+import 'dart:math' show sqrt, pow, Point;
+
+class CustomDBSCAN {
+  final List<Point<double>> points;
+  final double epsilon;
+  final int minPoints;
+  final List<List<int>> clusters = [];
+  final List<int> noise = [];
+  late List<bool> visited;  // Changed this line
+
+  CustomDBSCAN(this.points, this.epsilon, this.minPoints) {
+    // Initialize the visited list properly
+    visited = List<bool>.filled(points.length, false);  // Changed this line
+  }
+
+  double _distance(Point<double> a, Point<double> b) {
+    return sqrt(pow(a.x - b.x, 2) + pow(a.y - b.y, 2));
+  }
+
+  List<int> _getNeighbors(int pointIndex) {
+    List<int> neighbors = [];
+    for (int i = 0; i < points.length; i++) {
+      if (i != pointIndex && _distance(points[i], points[pointIndex]) <= epsilon) {
+        neighbors.add(i);
+      }
+    }
+    return neighbors;
+  }
+
+  void run() {
+    clusters.clear();  // Clear previous clusters
+    noise.clear();     // Clear previous noise
+
+    for (int i = 0; i < points.length; i++) {
+      if (visited[i]) continue;
+
+      visited[i] = true;
+      List<int> neighbors = _getNeighbors(i);
+
+      if (neighbors.length < minPoints) {
+        noise.add(i);
+        continue;
+      }
+
+      List<int> currentCluster = [i];
+      _expandCluster(neighbors, currentCluster);
+      clusters.add(currentCluster);
+    }
+  }
+
+  void _expandCluster(List<int> neighbors, List<int> currentCluster) {
+    for (int i = 0; i < neighbors.length; i++) {
+      int neighborIndex = neighbors[i];
+
+      if (!visited[neighborIndex]) {
+        visited[neighborIndex] = true;
+        List<int> newNeighbors = _getNeighbors(neighborIndex);
+
+        if (newNeighbors.length >= minPoints) {
+          neighbors.addAll(newNeighbors.where((n) => !neighbors.contains(n)));
+        }
+      }
+
+      if (!currentCluster.contains(neighborIndex)) {
+        currentCluster.add(neighborIndex);
+      }
+    }
+  }
+}
+
+
+class EnvironmentalDataPoint {
+  final double voc;
+  final double temperature;
+  final double pressure;
+  final double humidity;
+  final DateTime timestamp;
+
+  EnvironmentalDataPoint({
+    this.voc = 0.0,
+    this.temperature = 0.0,
+    this.pressure = 0.0,
+    this.humidity = 0.0,
+    DateTime? timestamp,
+  }) : timestamp = timestamp ?? DateTime.now();
+
+  Point<double> toPoint() {
+    return Point(
+        voc / 1000.0,      // Normalize VOC (0-3000 ppb range)
+        temperature / 50.0  // Normalize temperature (-20 to 50°C range)
+    );
+  }
+}
 
 class BleController extends GetxController {
   FlutterBlue ble = FlutterBlue.instance;
@@ -24,16 +117,19 @@ class BleController extends GetxController {
   var humidityData = <double>[].obs;
   var pressureData = <double>[].obs;
 
+  // Clustering data
+  var environmentalDataPoints = <EnvironmentalDataPoint>[].obs;
+  var clusterResults = RxMap<int, List<EnvironmentalDataPoint>>();
+
   final _scanResultsController = StreamController<List<ScanResult>>.broadcast();
   Stream<List<ScanResult>> get scanResults => _scanResultsController.stream;
-
   final List<ScanResult> _scanResultsList = [];
   Timer? pollingTimer;
 
   @override
   void onClose() {
     _scanResultsController.close();
-    pollingTimer?.cancel();  // Stop the polling when the controller is closed
+    pollingTimer?.cancel();
     super.onClose();
   }
 
@@ -76,7 +172,7 @@ class BleController extends GetxController {
         logger.d("Device connecting to: ${device.name}");
       } else if (state == BluetoothDeviceState.connected) {
         logger.i("Device connected: ${device.name}");
-        startPolling();  // Start polling when the device is connected
+        startPolling();
       } else {
         logger.w("Device Disconnected");
         stopPolling();
@@ -99,7 +195,7 @@ class BleController extends GetxController {
   Future<void> pollDeviceForData() async {
     if (connectedDevice == null) return;
 
-    List<BluetoothService> services = await connectedDevice?.discoverServices() ?? [];
+    List<BluetoothService> services = await connectedDevice!.discoverServices();
 
     final service = services.firstWhereOrNull(
           (s) => s.uuid.toString().toLowerCase() == "db450001-8e9a-4818-add7-6ed94a328ab4".toLowerCase(),
@@ -117,7 +213,7 @@ class BleController extends GetxController {
 
   Future<void> readCharacteristic(BluetoothService service, String charUuid, Function(List<int>) handler) async {
     final characteristic = service.characteristics.firstWhereOrNull(
-          (c) => c.uuid.toString().toLowerCase() == charUuid,
+          (c) => c.uuid.toString().toLowerCase() == charUuid.toLowerCase(),
     );
 
     if (characteristic != null && characteristic.properties.read) {
@@ -129,37 +225,30 @@ class BleController extends GetxController {
     }
   }
 
-  // Adjusted Air Quality (VOC) update method based on sensor's 2-byte value with scaling
   void _updateAirQuality(List<int> value) {
     logger.d("Air Quality data received: $value");
     if (value.length == 4) {
-      // VOC is in the first 2 bytes (16-bit value)
       final voc = (value[0] << 8) | value[1];
-      airQualityVOC.value = "VOC: ${(voc / 10).toStringAsFixed(2)} ppb";  // Adjusted scaling by dividing by 10
+      airQualityVOC.value = "VOC: ${(voc / 10).toStringAsFixed(2)} ppb";
 
       if (vocData.length >= 50) vocData.removeAt(0);
       vocData.add((voc / 10).toDouble());
+
+      addEnvironmentalDataPoint();
     } else {
       logger.e("Invalid Air Quality Data Length: ${value.length}");
     }
   }
 
-  // Adjusted Environmental update method with scaling for temperature and pressure
   void _updateEnvironmental(List<int> value) {
     logger.d("Environmental data received: $value");
     if (value.length == 8) {
-      // Humidity is 1 byte
       humidity.value = value[0].toDouble();
-
-      // Temperature is 1 byte, extended temperature is 2 bytes
       int temp = value[1];
-      int extendedTemp = (value[6] << 8) | value[7];  // Combine 2 bytes for extended temperature
-      temperature.value = (temp + extendedTemp / 100.0) / 10.0;  // Adjusted temperature scaling
-
-      // Pressure is 4 bytes (big-endian), divide by 100 for hPa
+      int extendedTemp = (value[6] << 8) | value[7];
+      temperature.value = (temp + extendedTemp / 100.0) / 10.0;
       pressure.value = ((value[2] << 24) | (value[3] << 16) | (value[4] << 8) | value[5]) / 100.0;
 
-      // Update historical data
       if (tempData.length >= 50) tempData.removeAt(0);
       tempData.add(temperature.value);
 
@@ -173,18 +262,15 @@ class BleController extends GetxController {
     }
   }
 
-  // Status update method (battery level, etc.)
   void _updateStatus(List<int> value) {
     logger.d("Status data received: $value");
     if (value.length == 2) {
       batteryLevel.value = value[1];
-      logger.d("Battery Level: ${batteryLevel.value}");
     } else {
       logger.e("Invalid Status Data Length: ${value.length}");
     }
   }
 
-  // Particulate Matter (PM) update method
   void _updatePM(List<int> value) {
     logger.d("PM data received: $value");
     if (value.length == 12) {
@@ -194,9 +280,78 @@ class BleController extends GetxController {
         "PM10": (value[4] << 8 | value[5]).toDouble(),
         "PM4": (value[6] << 8 | value[7]).toDouble(),
       };
-      logger.d("PM Details: $pmDetails");
     } else {
       logger.e("Invalid PM Data Length: ${value.length}");
+    }
+  }
+
+  void addEnvironmentalDataPoint() {
+    final vocValue = double.tryParse(
+        airQualityVOC.value.split(' ')[1]
+    ) ?? 0.0;
+
+    final dataPoint = EnvironmentalDataPoint(
+      voc: vocValue,
+      temperature: temperature.value,
+      pressure: pressure.value,
+      humidity: humidity.value,
+    );
+
+    environmentalDataPoints.add(dataPoint);
+
+    if (environmentalDataPoints.length >= 30) {
+      runDBSCANAnalysis();
+    }
+  }
+
+  void runDBSCANAnalysis() {
+    if (environmentalDataPoints.isEmpty) return;
+
+    try {
+      // Convert environmental data points to Point objects
+      List<Point<double>> points = environmentalDataPoints
+          .map((point) => point.toPoint())
+          .toList();
+
+      // Create and run custom DBSCAN with null safety
+      var dbscan = CustomDBSCAN(points, 0.3, 4);
+      dbscan.run();
+
+      final clusters = dbscan.clusters;
+      final noise = dbscan.noise;
+
+      logger.i('Found clusters: ${clusters.length}');
+      logger.i('Noise points: ${noise.length}');
+
+      final newClusterResults = <int, List<EnvironmentalDataPoint>>{};
+
+      // Process each cluster
+      for (int i = 0; i < clusters.length; i++) {
+        List<int> pointIndices = clusters[i];
+        newClusterResults[i] = [];  // Initialize empty list
+        for (int index in pointIndices) {
+          if (index < environmentalDataPoints.length) {
+            newClusterResults[i]!.add(environmentalDataPoints[index]);
+          }
+        }
+      }
+
+      clusterResults.value = newClusterResults;
+
+      // Log cluster information
+      clusterResults.forEach((clusterId, points) {
+        if (points.isNotEmpty) {
+          logger.i('Cluster $clusterId:');
+          logger.i('Size: ${points.length}');
+          logger.i('Avg VOC: ${points.map((p) => p.voc).reduce((a, b) => a + b) / points.length}');
+          logger.i('Avg Temp: ${points.map((p) => p.temperature).reduce((a, b) => a + b) / points.length}');
+          logger.i('Avg Humidity: ${points.map((p) => p.humidity).reduce((a, b) => a + b) / points.length}');
+          logger.i('Avg Pressure: ${points.map((p) => p.pressure).reduce((a, b) => a + b) / points.length}');
+        }
+      });
+    } catch (e, stackTrace) {
+      logger.e('Error during clustering: $e');
+      logger.e(stackTrace.toString());
     }
   }
 }

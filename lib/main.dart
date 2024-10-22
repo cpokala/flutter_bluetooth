@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:flutter_blue/flutter_blue.dart';
-import 'ble_controller.dart'; // Import your updated BleController
-import 'device_data_screen.dart'; // Import your DeviceDataScreen
+import 'ble_controller.dart';
+import 'device_data_screen.dart';
 
 void main() {
   runApp(const MyApp());
@@ -30,15 +30,16 @@ class MyHomePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("BLE SCANNER")),
+      appBar: AppBar(
+        title: const Text("BLE SCANNER"),
+      ),
       body: GetBuilder<BleController>(
-        init: BleController(), // Initialize the BleController
+        init: BleController(),
         builder: (controller) {
           return Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // Device Scanning Section
                 Expanded(
                   child: StreamBuilder<List<ScanResult>>(
                     stream: controller.scanResults,
@@ -53,18 +54,16 @@ class MyHomePage extends StatelessWidget {
                               elevation: 2,
                               child: ListTile(
                                 title: Text(
-                                  data.device.name.isNotEmpty ? data.device.name : "Unnamed Device",
+                                  data.device.name.isNotEmpty
+                                      ? data.device.name
+                                      : "Unnamed Device",
                                 ),
                                 subtitle: Text(data.device.id.id),
                                 trailing: Text(data.rssi.toString()),
-
-                                // onTap logic to connect only to ATMOTUBE by name
                                 onTap: () {
                                   if (data.device.name == "ATMOTUBE") {
                                     controller.connectToDevice(data.device, context);
-                                    Get.to(() => DeviceDataScreen(controller: controller)); // Navigate to DeviceDataScreen
-                                  } else {
-                                    controller.connectToDevice(data.device, context);
+                                    Get.to(() => DeviceDataScreen(controller: controller));
                                   }
                                 },
                               ),
