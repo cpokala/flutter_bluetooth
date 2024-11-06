@@ -4,6 +4,105 @@ import 'package:syncfusion_flutter_charts/charts.dart';
 import 'ble_controller.dart';
 import 'package:share_plus/share_plus.dart';
 
+class ClusteringControls extends StatelessWidget {
+  final BleController controller;
+
+  const ClusteringControls({
+    Key? key,
+    required this.controller,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.all(8),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Clustering Controls',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                Obx(() => controller.isAnalyzing.value
+                    ? const CircularProgressIndicator()
+                    : IconButton(
+                  icon: const Icon(Icons.refresh),
+                  onPressed: controller.runDBSCANAnalysis,
+                ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            // Epsilon control
+            Row(
+              children: [
+                const Text('Epsilon:'),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Obx(() => Slider(
+                    value: controller.epsilon.value,
+                    min: 0.1,
+                    max: 1.0,
+                    divisions: 18,
+                    label: controller.epsilon.value.toStringAsFixed(2),
+                    onChanged: (value) => controller.updateClusteringParameters(
+                      newEpsilon: value,
+                    ),
+                  )),
+                ),
+              ],
+            ),
+
+            // Min points control
+            Row(
+              children: [
+                const Text('Min Points:'),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Obx(() => Slider(
+                    value: controller.minPoints.value.toDouble(),
+                    min: 2,
+                    max: 10,
+                    divisions: 8,
+                    label: controller.minPoints.value.toString(),
+                    onChanged: (value) => controller.updateClusteringParameters(
+                      newMinPoints: value.toInt(),
+                    ),
+                  )),
+                ),
+              ],
+            ),
+
+            // Error message
+            Obx(() => controller.analysisError.value.isNotEmpty
+                ? Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                controller.analysisError.value,
+                style: const TextStyle(
+                  color: Colors.red,
+                  fontSize: 12,
+                ),
+              ),
+            )
+                : const SizedBox.shrink(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class DeviceDataScreen extends StatefulWidget {
   final BleController controller;
 
@@ -48,7 +147,6 @@ class DeviceDataScreenState extends State<DeviceDataScreen> {
       format: 'point.x : point.y',
     );
   }
-
   Widget _buildScatterPlot() {
     return Card(
       margin: const EdgeInsets.all(8.0),
@@ -67,12 +165,9 @@ class DeviceDataScreenState extends State<DeviceDataScreen> {
                     ),
                     items: const [
                       DropdownMenuItem(value: 'voc', child: Text('VOC')),
-                      DropdownMenuItem(
-                          value: 'temperature', child: Text('Temperature')),
-                      DropdownMenuItem(
-                          value: 'pressure', child: Text('Pressure')),
-                      DropdownMenuItem(
-                          value: 'humidity', child: Text('Humidity')),
+                      DropdownMenuItem(value: 'temperature', child: Text('Temperature')),
+                      DropdownMenuItem(value: 'pressure', child: Text('Pressure')),
+                      DropdownMenuItem(value: 'humidity', child: Text('Humidity')),
                     ],
                     onChanged: (value) {
                       if (value != null) {
@@ -90,13 +185,10 @@ class DeviceDataScreenState extends State<DeviceDataScreen> {
                       border: OutlineInputBorder(),
                     ),
                     items: const [
-                      DropdownMenuItem(
-                          value: 'temperature', child: Text('Temperature')),
+                      DropdownMenuItem(value: 'temperature', child: Text('Temperature')),
                       DropdownMenuItem(value: 'voc', child: Text('VOC')),
-                      DropdownMenuItem(
-                          value: 'pressure', child: Text('Pressure')),
-                      DropdownMenuItem(
-                          value: 'humidity', child: Text('Humidity')),
+                      DropdownMenuItem(value: 'pressure', child: Text('Pressure')),
+                      DropdownMenuItem(value: 'humidity', child: Text('Humidity')),
                     ],
                     onChanged: (value) {
                       if (value != null) {
@@ -113,39 +205,31 @@ class DeviceDataScreenState extends State<DeviceDataScreen> {
             child: Obx(() {
               List<ScatterSeries<EnvironmentalDataPoint, double>> series = [];
 
-              // Add series for each cluster
               widget.controller.clusterResults.forEach((clusterId, points) {
                 series.add(
                   ScatterSeries<EnvironmentalDataPoint, double>(
                     name: 'Cluster $clusterId',
                     dataSource: points,
                     xValueMapper: (EnvironmentalDataPoint point, _) =>
-                        widget.controller.getAxisValue(point, widget.controller
-                            .selectedXAxis.value),
+                        widget.controller.getAxisValue(point, widget.controller.selectedXAxis.value),
                     yValueMapper: (EnvironmentalDataPoint point, _) =>
-                        widget.controller.getAxisValue(point, widget.controller
-                            .selectedYAxis.value),
-                    color: widget.controller.clusterColors[clusterId %
-                        widget.controller.clusterColors.length],
+                        widget.controller.getAxisValue(point, widget.controller.selectedYAxis.value),
+                    color: widget.controller.clusterColors[clusterId % widget.controller.clusterColors.length],
                     markerSettings: const MarkerSettings(height: 8, width: 8),
-                    dataLabelSettings: const DataLabelSettings(
-                        isVisible: false),
+                    dataLabelSettings: const DataLabelSettings(isVisible: false),
                   ),
                 );
               });
 
-              // Add noise points series
               if (widget.controller.noisePoints.isNotEmpty) {
                 series.add(
                   ScatterSeries<EnvironmentalDataPoint, double>(
                     name: 'Noise',
                     dataSource: widget.controller.noisePoints,
                     xValueMapper: (EnvironmentalDataPoint point, _) =>
-                        widget.controller.getAxisValue(
-                            point, widget.controller.selectedXAxis.value),
+                        widget.controller.getAxisValue(point, widget.controller.selectedXAxis.value),
                     yValueMapper: (EnvironmentalDataPoint point, _) =>
-                        widget.controller.getAxisValue(
-                            point, widget.controller.selectedYAxis.value),
+                        widget.controller.getAxisValue(point, widget.controller.selectedYAxis.value),
                     color: Colors.grey,
                     markerSettings: const MarkerSettings(height: 6, width: 6),
                   ),
@@ -155,18 +239,14 @@ class DeviceDataScreenState extends State<DeviceDataScreen> {
               return SfCartesianChart(
                 primaryXAxis: NumericAxis(
                   title: AxisTitle(
-                    text: '${widget.controller.selectedXAxis.value
-                        .toUpperCase()} '
-                        '(${widget.controller.getAxisUnit(
-                        widget.controller.selectedXAxis.value)})',
+                    text: '${widget.controller.selectedXAxis.value.toUpperCase()} '
+                        '(${widget.controller.getAxisUnit(widget.controller.selectedXAxis.value)})',
                   ),
                 ),
                 primaryYAxis: NumericAxis(
                   title: AxisTitle(
-                    text: '${widget.controller.selectedYAxis.value
-                        .toUpperCase()} '
-                        '(${widget.controller.getAxisUnit(
-                        widget.controller.selectedYAxis.value)})',
+                    text: '${widget.controller.selectedYAxis.value.toUpperCase()} '
+                        '(${widget.controller.getAxisUnit(widget.controller.selectedYAxis.value)})',
                   ),
                 ),
                 series: series,
@@ -187,8 +267,7 @@ class DeviceDataScreenState extends State<DeviceDataScreen> {
 
   Widget _buildClusterCard(int clusterId, List<EnvironmentalDataPoint> points) {
     final color = clusterId >= 0
-        ? widget.controller.clusterColors[clusterId %
-        widget.controller.clusterColors.length]
+        ? widget.controller.clusterColors[clusterId % widget.controller.clusterColors.length]
         : Colors.grey;
 
     final stats = widget.controller.getClusterStatistics(points);
@@ -214,16 +293,13 @@ class DeviceDataScreenState extends State<DeviceDataScreen> {
                 _buildStatRow('Pressure', stats['avgPressure']!, 'hPa'),
                 const SizedBox(height: 8),
                 LinearProgressIndicator(
-                  value: points.length /
-                      widget.controller.environmentalDataPoints.length,
+                  value: points.length / widget.controller.environmentalDataPoints.length,
                   backgroundColor: Colors.grey[200],
                   valueColor: AlwaysStoppedAnimation<Color>(color),
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '${(points.length /
-                      widget.controller.environmentalDataPoints.length * 100)
-                      .toStringAsFixed(1)}% of total points',
+                  '${(points.length / widget.controller.environmentalDataPoints.length * 100).toStringAsFixed(1)}% of total points',
                   style: TextStyle(color: Colors.grey[600], fontSize: 12),
                 ),
               ],
@@ -264,7 +340,7 @@ class DeviceDataScreenState extends State<DeviceDataScreen> {
         ),
         series: <LineSeries<double, double>>[
           LineSeries<double, double>(
-            dataSource: data.toList(),  // Convert RxList to List
+            dataSource: data.toList(),
             xValueMapper: (double value, int index) => index.toDouble(),
             yValueMapper: (double value, int index) => value,
             name: title,
@@ -282,169 +358,161 @@ class DeviceDataScreenState extends State<DeviceDataScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
+        appBar: AppBar(
         title: const Text('Air Quality Data'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: () => widget.controller.runDBSCANAnalysis(),
-          ),
-          IconButton(
-            icon: const Icon(Icons.share),
-            onPressed: () {
-              final scaffoldMessenger = ScaffoldMessenger.of(context);
-              final report = widget.controller.exportClusterData();
+    actions: [
+    IconButton(
+    icon: const Icon(Icons.refresh),
+    onPressed: () => widget.controller.runDBSCANAnalysis(),
+    ),
+    IconButton(
+    icon: const Icon(Icons.share),
+    onPressed: () {
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
+    final report = widget.controller.exportClusterData();
 
-              Share.share(
-                report,
-                subject: 'Cluster Analysis Report ${DateTime.now()
-                    .toString()
-                    .split('.')[0]}',
-              ).catchError((error) {
-                scaffoldMessenger.showSnackBar(
-                  SnackBar(
-                    content: Text('Failed to share report: $error'),
-                    backgroundColor: Colors.red,
+    Share.share(
+    report,
+    subject: 'Cluster Analysis Report ${DateTime.now().toString().split('.')[0]}',
+    ).catchError((error) {
+    scaffoldMessenger.showSnackBar(
+    SnackBar(
+    content: Text('Failed to share report: $error'),
+    backgroundColor: Colors.red,
+    ),
+    );
+    return null;
+    });
+    },
+    ),
+    ],
+    ),
+    body: SingleChildScrollView(
+    child: Column(
+    children: [
+    // Current Values Section
+    Card(
+    margin: const EdgeInsets.all(8),
+    child: Padding(
+    padding: const EdgeInsets.all(16),
+    child: Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+    const Text(
+    'Current Readings',
+    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+    ),
+    const SizedBox(height: 12),
+    Obx(() => Column(
+    children: [
+    Text(widget.controller.airQualityVOC.value),
+    Text('Temperature: ${widget.controller.temperature.value.toStringAsFixed(2)} °C'),
+    Text('Humidity: ${widget.controller.humidity.value.toStringAsFixed(2)} %'),
+    Text('Pressure: ${widget.controller.pressure.value.toStringAsFixed(2)} hPa'),
+    ],
+    )),
+    ],
+    ),
+    ),
+    ),
+
+    // Add Clustering Controls
+      ClusteringControls(controller: widget.controller),
+
+      // Clustering Analysis Section
+      _buildScatterPlot(),
+
+      // Cluster Statistics Section
+      Card(
+        margin: const EdgeInsets.all(8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Cluster Analysis',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  Text(
+                    '${widget.controller.environmentalDataPoints.length} total points',
+                    style: TextStyle(color: Colors.grey[600]),
+                  ),
+                ],
+              ),
+            ),
+            Obx(() {
+              if (widget.controller.clusterResults.isEmpty) {
+                return const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Text(
+                    'Collecting data for clustering analysis...',
+                    style: TextStyle(fontStyle: FontStyle.italic),
                   ),
                 );
-                return null; // Add return statement for the catchError
-              });
-            },
-          ),
-        ],
+              }
+              return Column(
+                children: [
+                  ...widget.controller.clusterResults.entries
+                      .map((entry) => _buildClusterCard(entry.key, entry.value)),
+                  if (widget.controller.noisePoints.isNotEmpty)
+                    _buildClusterCard(-1, widget.controller.noisePoints),
+                ],
+              );
+            }),
+          ],
+        ),
       ),
-      body: SingleChildScrollView(
+
+      // Historical Data Charts
+      Padding(
+        padding: const EdgeInsets.all(8),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Current Values Section
-            Card(
-              margin: const EdgeInsets.all(8),
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Current Readings',
-                      style: TextStyle(
-                          fontSize: 18, fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 12),
-                    Obx(() =>
-                        Column(
-                          children: [
-                            Text(widget.controller.airQualityVOC.value),
-                            Text('Temperature: ${widget.controller.temperature
-                                .value.toStringAsFixed(2)} °C'),
-                            Text('Humidity: ${widget.controller.humidity.value
-                                .toStringAsFixed(2)} %'),
-                            Text('Pressure: ${widget.controller.pressure.value
-                                .toStringAsFixed(2)} hPa'),
-                          ],
-                        )),
-                  ],
-                ),
+            const Padding(
+              padding: EdgeInsets.all(8),
+              child: Text(
+                'Historical Data',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
             ),
-
-            // Clustering Analysis Section
-            _buildScatterPlot(),
-
-            // Cluster Statistics Section
-            Card(
-              margin: const EdgeInsets.all(8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Cluster Analysis',
-                          style: TextStyle(fontSize: 18, fontWeight: FontWeight
-                              .bold),
-                        ),
-                        Text(
-                          '${widget.controller.environmentalDataPoints
-                              .length} total points',
-                          style: TextStyle(color: Colors.grey[600]),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Obx(() {
-                    if (widget.controller.clusterResults.isEmpty) {
-                      return const Padding(
-                        padding: EdgeInsets.all(16),
-                        child: Text(
-                          'Collecting data for clustering analysis...',
-                          style: TextStyle(fontStyle: FontStyle.italic),
-                        ),
-                      );
-                    }
-                    return Column(
-                      children: [
-                        ...widget.controller.clusterResults.entries
-                            .map((entry) =>
-                            _buildClusterCard(entry.key, entry.value))
-                            ,
-                        if (widget.controller.noisePoints.isNotEmpty)
-                          _buildClusterCard(-1, widget.controller.noisePoints),
-                      ],
-                    );
-                  }),
-                ],
-              ),
+            _buildLineChart(
+              title: 'VOC Levels',
+              data: widget.controller.vocData,
+              yAxisTitle: 'VOC (ppb)',
+              zoomPanBehavior: _zoomPanBehaviorVOC,
             ),
-
-            // Historical Data Charts
-            Padding(
-              padding: const EdgeInsets.all(8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Padding(
-                    padding: EdgeInsets.all(8),
-                    child: Text(
-                      'Historical Data',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                  _buildLineChart(
-                    title: 'VOC Levels',
-                    data: widget.controller.vocData,
-                    yAxisTitle: 'VOC (ppb)',
-                    zoomPanBehavior: _zoomPanBehaviorVOC,
-                  ),
-                  const SizedBox(height: 20),
-                  _buildLineChart(
-                    title: 'Temperature',
-                    data: widget.controller.tempData,
-                    yAxisTitle: 'Temperature (°C)',
-                    zoomPanBehavior: _zoomPanBehaviorTemp,
-                  ),
-                  const SizedBox(height: 20),
-                  _buildLineChart(
-                    title: 'Humidity',
-                    data: widget.controller.humidityData,
-                    yAxisTitle: 'Humidity (%)',
-                    zoomPanBehavior: _zoomPanBehaviorHumidity,
-                  ),
-                  const SizedBox(height: 20),
-                  _buildLineChart(
-                    title: 'Pressure',
-                    data: widget.controller.pressureData,
-                    yAxisTitle: 'Pressure (hPa)',
-                    zoomPanBehavior: _zoomPanBehaviorHumidity,
-                  ),
-                ],
-              ),
+            const SizedBox(height: 20),
+            _buildLineChart(
+              title: 'Temperature',
+              data: widget.controller.tempData,
+              yAxisTitle: 'Temperature (°C)',
+              zoomPanBehavior: _zoomPanBehaviorTemp,
+            ),
+            const SizedBox(height: 20),
+            _buildLineChart(
+              title: 'Humidity',
+              data: widget.controller.humidityData,
+              yAxisTitle: 'Humidity (%)',
+              zoomPanBehavior: _zoomPanBehaviorHumidity,
+            ),
+            const SizedBox(height: 20),
+            _buildLineChart(
+              title: 'Pressure',
+              data: widget.controller.pressureData,
+              yAxisTitle: 'Pressure (hPa)',
+              zoomPanBehavior: _zoomPanBehaviorHumidity,
             ),
           ],
         ),
       ),
+    ],
+    ),
+    ),
     );
   }
 }

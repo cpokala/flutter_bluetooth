@@ -1,11 +1,14 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_blue/flutter_blue.dart';
 import 'package:get/get.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:logger/logger.dart';
+import 'package:http/http.dart' as http;
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
-import 'optimized_dbscan.dart';
 
 class BleController extends GetxController {
   FlutterBlue ble = FlutterBlue.instance;
@@ -31,9 +34,16 @@ class BleController extends GetxController {
   var clusterResults = RxMap<int, List<EnvironmentalDataPoint>>();
   var noisePoints = RxList<EnvironmentalDataPoint>();
 
+  // API-related variables
+  final String apiUrl = 'http://192.168.1.82:8000'; // For Android Emulator
+  // Use 'http://localhost:8000' for iOS simulator
+  // Use actual IP address for physical device
+  var isAnalyzing = false.obs;
+  var analysisError = RxString('');
+
   // DBSCAN parameters
-  var epsilon = 0.3.obs;
-  var minPoints = 4.obs;
+  var epsilon = 0.5.obs;
+  var minPoints = 5.obs;
 
   // Visualization controls
   var selectedXAxis = 'voc'.obs;
@@ -71,12 +81,12 @@ class BleController extends GetxController {
       }
 
       _scanResultsList.clear();
-      ble.scan(timeout: const Duration(seconds: 50)).listen((result) {
+      ble.scan(timeout: const Duration(seconds: 60)).listen((result) {
         _scanResultsList.add(result);
         _scanResultsController.add(_scanResultsList);
       });
 
-      await Future.delayed(const Duration(seconds: 50));
+      await Future.delayed(const Duration(seconds: 60));
       ble.stopScan();
     } else {
       logger.e("Required permissions not granted.");
@@ -214,153 +224,6 @@ class BleController extends GetxController {
     }
   }
 
-  // DBSCAN related methods
-  void runDBSCANAnalysis() {
-    if (environmentalDataPoints.length < minPoints.value) {
-      logger.i('Not enough data points for clustering (minimum ${minPoints.value} required)');
-      return;
-    }
-
-    try {
-      List<List<double>> points = environmentalDataPoints.map((point) => [
-        point.voc,
-        point.temperature,
-        point.pressure,
-        point.humidity,
-      ]).toList();
-
-      logger.d('Starting DBSCAN analysis with ${points.length} points');
-
-      var dbscan = OptimizedDBSCAN(
-        points: points,
-        eps: epsilon.value,
-        minPoints: minPoints.value,
-      );
-
-      Map<String, dynamic> results = dbscan.fit();
-
-      final newClusterResults = <int, List<EnvironmentalDataPoint>>{};
-      final clusters = results['clusters'] as Map<int, List<int>>;
-
-      clusters.forEach((clusterId, pointIndices) {
-        newClusterResults[clusterId] = pointIndices.map((index) {
-          var point = environmentalDataPoints[index];
-          return EnvironmentalDataPoint(
-            voc: point.voc,
-            temperature: point.temperature,
-            pressure: point.pressure,
-            humidity: point.humidity,
-            timestamp: point.timestamp,
-            clusterId: clusterId,
-          );
-        }).toList();
-
-        var stats = (results['statistics'] as Map)[clusterId] as Map<String, double>;
-        _logClusterStats(clusterId, stats);
-      });
-
-      final noiseIndices = results['noise_points'] as List<int>;
-      final newNoisePoints = noiseIndices.map((index) {
-        var point = environmentalDataPoints[index];
-        return EnvironmentalDataPoint(
-          voc: point.voc,
-          temperature: point.temperature,
-          pressure: point.pressure,
-          humidity: point.humidity,
-          timestamp: point.timestamp,
-          clusterId: -1,
-        );
-      }).toList();
-
-      clusterResults.value = newClusterResults;
-      noisePoints.value = newNoisePoints;
-
-      logger.i('DBSCAN Analysis Complete:');
-      logger.i('Found ${clusters.length} clusters');
-      logger.i('Noise points: ${noisePoints.length}');
-
-      _analyzeEnvironmentalConditions(results['statistics'] as Map);
-
-    } catch (e, stackTrace) {
-      logger.e('Error during clustering: $e');
-      logger.e(stackTrace.toString());
-    }
-  }
-
-  void _logClusterStats(int clusterId, Map<String, double> stats) {
-    logger.i('Cluster $clusterId Analysis:');
-    logger.i('Size: ${stats['size']?.toInt()}');
-    logger.i('VOC: ${stats['avg_voc']?.toStringAsFixed(2)} ± ${stats['std_voc']?.toStringAsFixed(2)} ppb');
-    logger.i('Temperature: ${stats['avg_temperature']?.toStringAsFixed(2)} ± ${stats['std_temperature']?.toStringAsFixed(2)} °C');
-    logger.i('Humidity: ${stats['avg_humidity']?.toStringAsFixed(2)} ± ${stats['std_humidity']?.toStringAsFixed(2)} %');
-    logger.i('Pressure: ${stats['avg_pressure']?.toStringAsFixed(2)} ± ${stats['std_pressure']?.toStringAsFixed(2)} hPa');
-  }
-
-  void _analyzeEnvironmentalConditions(Map statistics) {
-    statistics.forEach((clusterId, stats) {
-      Map<String, double> clusterStats = stats as Map<String, double>;
-
-      // Analyze measurements
-      double avgVoc = clusterStats['avg_voc'] ?? 0;
-      double avgTemp = clusterStats['avg_temperature'] ?? 0;
-      double avgHumidity = clusterStats['avg_humidity'] ?? 0;
-
-      if (avgVoc > 2000) {
-        logger.w('High VOC levels in cluster $clusterId: $avgVoc ppb');
-      }
-      if (avgTemp > 30) {
-        logger.w('High temperature in cluster $clusterId: $avgTemp °C');
-      }
-      if (avgHumidity > 70) {
-        logger.w('High humidity in cluster $clusterId: $avgHumidity%');
-      }
-
-      _analyzeParameterCorrelations(clusterId);
-    });
-  }
-
-  void _analyzeParameterCorrelations(int clusterId) {
-    var clusterPoints = clusterId == -1 ?
-    noisePoints : clusterResults[clusterId] ?? [];
-
-    if (clusterPoints.length < 2) return;
-
-    double vocTempCorr = _calculateCorrelation(
-        clusterPoints.map((p) => p.voc).toList(),
-        clusterPoints.map((p) => p.temperature).toList()
-    );
-
-    if (vocTempCorr.abs() > 0.7) {
-      logger.i('Strong correlation (${vocTempCorr.toStringAsFixed(2)}) between VOC and Temperature in cluster $clusterId');
-    }
-  }
-
-  double _calculateCorrelation(List<double> x, List<double> y) {
-    if (x.length != y.length || x.isEmpty) return 0;
-
-    double meanX = x.reduce((a, b) => a + b) / x.length;
-    double meanY = y.reduce((a, b) => a + b) / y.length;
-
-    double covariance = 0;
-    double varX = 0;
-    double varY = 0;
-
-    for (int i = 0; i < x.length; i++) {
-      covariance += (x[i] - meanX) * (y[i] - meanY);
-      varX += (x[i] - meanX) * (x[i] - meanX);
-      varY += (y[i] - meanY) * (y[i] - meanY);
-    }
-
-    if (varX == 0 || varY == 0) return 0;
-    return covariance / (sqrt(varX * varY));
-  }
-
-  void updateClusteringParameters({double? newEpsilon, int? newMinPoints}) {
-    if (newEpsilon != null) epsilon.value = newEpsilon;
-    if (newMinPoints != null) minPoints.value = newMinPoints;
-    runDBSCANAnalysis();
-  }
-
   void addEnvironmentalDataPoint() {
     final vocValue = double.tryParse(
         airQualityVOC.value.split(' ')[1]
@@ -380,33 +243,149 @@ class BleController extends GetxController {
     }
   }
 
+  // DBSCAN Analysis with API integration
+  Future<void> runDBSCANAnalysis() async {
+    if (environmentalDataPoints.isEmpty) {
+      logger.w('No data points available for analysis');
+      return;
+    }
+
+    try {
+      isAnalyzing.value = true;
+      analysisError.value = '';
+
+      // Prepare data for API
+      final dataPoints = environmentalDataPoints.map((point) => {
+        'voc': point.voc,
+        'temperature': point.temperature,
+        'pressure': point.pressure,
+        'humidity': point.humidity,
+        'timestamp': point.timestamp.toIso8601String(),
+      }).toList();
+
+      final requestBody = {
+        'data_points': dataPoints,
+        'eps': epsilon.value,
+        'min_samples': minPoints.value
+      };
+
+      logger.d('Sending ${dataPoints.length} points for analysis');
+
+      // Make API request
+      final response = await http.post(
+        Uri.parse('$apiUrl/cluster'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(requestBody),
+      ).timeout(
+        const Duration(seconds: 60),
+        onTimeout: () {
+          throw TimeoutException('Analysis request timed out');
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final result = jsonDecode(response.body);
+        await _processClusteringResults(result);
+      } else {
+        throw HttpException('Error ${response.statusCode}: ${response.body}');
+      }
+    } catch (e, stackTrace) {
+      logger.e('Error during clustering analysis: $e');
+      logger.e(stackTrace.toString());
+      analysisError.value = 'Analysis failed: ${e.toString()}';
+    } finally {
+      isAnalyzing.value = false;
+    }
+  }
+
+  Future<void> _processClusteringResults(Map<String, dynamic> result) async {
+    try {
+      final newClusterResults = <int, List<EnvironmentalDataPoint>>{};
+
+      final clusters = result['clusters'] as Map<String, dynamic>;
+      clusters.forEach((key, value) {
+        int clusterId = int.parse(key);
+        List<dynamic> points = value as List;
+
+        newClusterResults[clusterId] = points.map((p) =>
+            EnvironmentalDataPoint(
+              voc: p['voc'].toDouble(),
+              temperature: p['temperature'].toDouble(),
+              pressure: p['pressure'].toDouble(),
+              humidity: p['humidity'].toDouble(),
+              timestamp: DateTime.parse(p['timestamp']),
+              clusterId: clusterId,
+            )).toList();
+      });
+
+      final noisePointsList = result['noise_points'] as List;
+      final newNoisePoints = noisePointsList.map((p) =>
+          EnvironmentalDataPoint(
+            voc: p['voc'].toDouble(),
+            temperature: p['temperature'].toDouble(),
+            pressure: p['pressure'].toDouble(),
+            humidity: p['humidity'].toDouble(),
+            timestamp: DateTime.parse(p['timestamp']),
+            clusterId: -1,
+          )).toList();
+
+      clusterResults.value = newClusterResults;
+      noisePoints.value = newNoisePoints;
+
+      _logAnalysisResults(result['statistics'] as Map<String, dynamic>);
+    } catch (e, stackTrace) {
+      logger.e('Error processing clustering results: $e');
+      logger.e(stackTrace.toString());
+      throw Exception('Failed to process clustering results: $e');
+    }
+  }
+
+  void _logAnalysisResults(Map<String, dynamic> statistics) {
+    statistics.forEach((clusterId, stats) {
+      String clusterType = clusterId == '-1' ? 'Noise' : 'Cluster $clusterId';
+      logger.i('\n$clusterType Analysis:');
+      logger.i('Size: ${stats['size']}');
+
+      logger.i('VOC: ${stats['avg_voc']?.toStringAsFixed(2)} ± '
+          '${stats['std_voc']?.toStringAsFixed(2)} ppb');
+      logger.i('Temperature: ${stats['avg_temperature']?.toStringAsFixed(2)} ± '
+          '${stats['std_temperature']?.toStringAsFixed(2)} °C');
+      logger.i('Humidity: ${stats['avg_humidity']?.toStringAsFixed(2)} ± '
+          '${stats['std_humidity']?.toStringAsFixed(2)} %');
+      logger.i('Pressure: ${stats['avg_pressure']?.toStringAsFixed(2)} ± '
+          '${stats['std_pressure']?.toStringAsFixed(2)} hPa');
+    });
+  }
+
+  // Helper methods
+  void updateClusteringParameters({double? newEpsilon, int? newMinPoints}) {
+    if (newEpsilon != null) epsilon.value = newEpsilon;
+    if (newMinPoints != null) minPoints.value = newMinPoints;
+    runDBSCANAnalysis();
+  }
+
+  Color getClusterColor(int clusterId) {
+    if (clusterId == -1) return Colors.grey;
+    return clusterColors[clusterId % clusterColors.length];
+  }
+
   double getAxisValue(EnvironmentalDataPoint point, String axis) {
     switch (axis) {
-      case 'voc':
-        return point.voc;
-      case 'temperature':
-        return point.temperature;
-      case 'pressure':
-        return point.pressure;
-      case 'humidity':
-        return point.humidity;
-      default:
-        return 0.0;
+      case 'voc': return point.voc;
+      case 'temperature': return point.temperature;
+      case 'pressure': return point.pressure;
+      case 'humidity': return point.humidity;
+      default: return 0.0;
     }
   }
 
   String getAxisUnit(String axis) {
     switch (axis) {
-      case 'voc':
-        return 'ppb';
-      case 'temperature':
-        return '°C';
-      case 'pressure':
-        return 'hPa';
-      case 'humidity':
-        return '%';
-      default:
-        return '';
+    case 'voc': return 'ppb';
+    case 'temperature': return '°C';
+    case 'pressure': return 'hPa';
+    case 'humidity': return '%';
+    default: return '';
     }
   }
 
@@ -424,6 +403,8 @@ class BleController extends GetxController {
     pressure.value = 0.0;
     batteryLevel.value = 0;
     pmDetails.clear();
+    analysisError.value = '';
+    isAnalyzing.value = false;
   }
 
   Map<String, double> getClusterStatistics(List<EnvironmentalDataPoint> points) {
@@ -446,7 +427,6 @@ class BleController extends GetxController {
 
   Map<String, double> getAxisRange(String axisType) {
     List<EnvironmentalDataPoint> allPoints = [];
-
     clusterResults.forEach((_, points) {
       allPoints.addAll(points);
     });
@@ -490,6 +470,12 @@ class BleController extends GetxController {
       buffer.writeln('Average Temperature: ${stats['avgTemperature']?.toStringAsFixed(2)} °C');
       buffer.writeln('Average Humidity: ${stats['avgHumidity']?.toStringAsFixed(2)} %');
       buffer.writeln('Average Pressure: ${stats['avgPressure']?.toStringAsFixed(2)} hPa');
+
+      // Add time range information
+      if (points.isNotEmpty) {
+        var timeRange = _getClusterTimeRange(points);
+        buffer.writeln('Time Range: ${timeRange['start']} to ${timeRange['end']}');
+      }
     });
 
     if (noisePoints.isNotEmpty) {
@@ -503,6 +489,55 @@ class BleController extends GetxController {
     }
 
     return buffer.toString();
+  }
+
+  Map<String, String> _getClusterTimeRange(List<EnvironmentalDataPoint> points) {
+    var sortedPoints = List<EnvironmentalDataPoint>.from(points)
+      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+
+    return {
+      'start': sortedPoints.first.timestamp.toString(),
+      'end': sortedPoints.last.timestamp.toString(),
+    };
+  }
+
+  // Correlation analysis methods
+  double _calculateCorrelation(List<double> x, List<double> y) {
+    if (x.length != y.length || x.isEmpty) return 0;
+
+    double meanX = x.reduce((a, b) => a + b) / x.length;
+    double meanY = y.reduce((a, b) => a + b) / y.length;
+
+    double covariance = 0;
+    double varX = 0;
+    double varY = 0;
+
+    for (int i = 0; i < x.length; i++) {
+      covariance += (x[i] - meanX) * (y[i] - meanY);
+      varX += (x[i] - meanX) * (x[i] - meanX);
+      varY += (y[i] - meanY) * (y[i] - meanY);
+    }
+
+    if (varX == 0 || varY == 0) return 0;
+    return covariance / (sqrt(varX * varY));
+  }
+
+  Map<String, double> getFeatureCorrelations(List<EnvironmentalDataPoint> points) {
+    if (points.length < 2) return {};
+
+    var vocValues = points.map((p) => p.voc).toList();
+    var tempValues = points.map((p) => p.temperature).toList();
+    var humidityValues = points.map((p) => p.humidity).toList();
+    var pressureValues = points.map((p) => p.pressure).toList();
+
+    return {
+      'voc_temperature': _calculateCorrelation(vocValues, tempValues),
+      'voc_humidity': _calculateCorrelation(vocValues, humidityValues),
+      'voc_pressure': _calculateCorrelation(vocValues, pressureValues),
+      'temperature_humidity': _calculateCorrelation(tempValues, humidityValues),
+      'temperature_pressure': _calculateCorrelation(tempValues, pressureValues),
+      'humidity_pressure': _calculateCorrelation(humidityValues, pressureValues),
+    };
   }
 }
 
