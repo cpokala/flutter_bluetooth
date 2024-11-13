@@ -6,30 +6,38 @@ from sklearn.preprocessing import StandardScaler
 import joblib
 
 def generate_training_data(n_samples=100):
-    """Generate sample environmental data"""
+    """Generate sample environmental data with clear density patterns"""
     np.random.seed(42)
 
-    # Generate realistic ranges
-    voc_values = np.random.uniform(50, 300, n_samples)
-    temp_values = np.random.uniform(20, 30, n_samples)
-    pressure_values = np.random.uniform(1000, 1025, n_samples)
-    humidity_values = np.random.uniform(30, 70, n_samples)
+    # Generate multiple gaussian clusters
+    clusters = []
 
-    # Create patterns
-    for i in range(n_samples):
-        if i % 3 == 0:
-            voc_values[i] += 50
-            temp_values[i] += 2
-            humidity_values[i] += 10
+    # Dense cluster 1
+    c1 = np.random.normal(loc=[100, 25, 1013, 45], scale=[5, 0.5, 1, 2], size=(n_samples//3, 4))
+    clusters.append(c1)
 
-    X = np.column_stack([
-        voc_values,
-        temp_values,
-        pressure_values,
-        humidity_values
-    ]).astype(np.float32)
+    # Dense cluster 2
+    c2 = np.random.normal(loc=[200, 28, 1018, 55], scale=[5, 0.5, 1, 2], size=(n_samples//3, 4))
+    clusters.append(c2)
 
-    return X
+    # Scattered points
+    noise = np.random.uniform(
+        low=[50, 20, 1000, 30],
+        high=[250, 30, 1025, 70],
+        size=(n_samples//3, 4)
+    )
+    clusters.append(noise)
+
+    # Combine all points
+    X = np.vstack(clusters)
+
+    # Ensure values are within realistic ranges
+    X[:, 0] = np.clip(X[:, 0], 50, 300)    # VOC
+    X[:, 1] = np.clip(X[:, 1], 20, 30)     # Temperature
+    X[:, 2] = np.clip(X[:, 2], 1000, 1025) # Pressure
+    X[:, 3] = np.clip(X[:, 3], 30, 70)     # Humidity
+
+    return X.astype(np.float32)
 
 def save_model_and_scaler(output_dir, eps=0.5, min_samples=5):
     """Create and save the model and scaler"""
