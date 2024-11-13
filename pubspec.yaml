@@ -21,6 +21,8 @@ dependencies:
   dbscan: ^0.1.1
   share_plus: ^7.0.0
   http: ^1.1.0
+  ml_algo: ^16.17.7
+  path_provider: ^2.0.15
 
 
 dev_dependencies:
@@ -33,6 +35,9 @@ flutter:
   generate: true
   assets:
     - assets/images/
+    - assets/dbscan_model.onnx
+    - assets/scaler_params.json
+    - assets/sample_predictions.json
 
 # Add this section to allow mixed mode compilation
 dependency_overrides:

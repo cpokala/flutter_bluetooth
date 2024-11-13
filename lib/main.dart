@@ -1,10 +1,22 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:flutter_blue/flutter_blue.dart';
 import 'ble_controller.dart';
 import 'device_data_screen.dart';
+import 'ml_service.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  try {
+    await MlService.initialize();
+  } catch (e) {
+    if (kDebugMode) {
+      print('Failed to initialize ML Service: $e');
+    }
+  }
+
   runApp(const MyApp());
 }
 
@@ -23,6 +35,7 @@ class MyApp extends StatelessWidget {
     );
   }
 }
+
 
 class MyHomePage extends StatelessWidget {
   const MyHomePage({super.key});

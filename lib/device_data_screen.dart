@@ -8,9 +8,9 @@ class ClusteringControls extends StatelessWidget {
   final BleController controller;
 
   const ClusteringControls({
-    Key? key,
+    super.key,
     required this.controller,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -116,12 +116,17 @@ class DeviceDataScreenState extends State<DeviceDataScreen> {
   late ZoomPanBehavior _zoomPanBehaviorVOC;
   late ZoomPanBehavior _zoomPanBehaviorTemp;
   late ZoomPanBehavior _zoomPanBehaviorHumidity;
+  late ZoomPanBehavior _zoomPanBehaviorPressure;
   late ZoomPanBehavior _zoomPanBehaviorScatter;
   late TooltipBehavior _tooltipBehavior;
 
   @override
   void initState() {
     super.initState();
+    _initializeChartBehaviors();
+  }
+
+  void _initializeChartBehaviors() {
     _zoomPanBehaviorVOC = ZoomPanBehavior(
       enablePinching: true,
       enablePanning: true,
@@ -137,6 +142,11 @@ class DeviceDataScreenState extends State<DeviceDataScreen> {
       enablePanning: true,
       zoomMode: ZoomMode.xy,
     );
+    _zoomPanBehaviorPressure = ZoomPanBehavior(
+      enablePinching: true,
+      enablePanning: true,
+      zoomMode: ZoomMode.xy,
+    );
     _zoomPanBehaviorScatter = ZoomPanBehavior(
       enablePinching: true,
       enablePanning: true,
@@ -147,6 +157,7 @@ class DeviceDataScreenState extends State<DeviceDataScreen> {
       format: 'point.x : point.y',
     );
   }
+
   Widget _buildScatterPlot() {
     return Card(
       margin: const EdgeInsets.all(8.0),
@@ -157,44 +168,48 @@ class DeviceDataScreenState extends State<DeviceDataScreen> {
             child: Row(
               children: [
                 Expanded(
-                  child: DropdownButtonFormField<String>(
-                    value: widget.controller.selectedXAxis.value,
-                    decoration: const InputDecoration(
-                      labelText: 'X Axis',
-                      border: OutlineInputBorder(),
+                  child: GetX<BleController>( // Wrap with GetX
+                    builder: (_) => DropdownButtonFormField<String>(
+                      value: widget.controller.selectedXAxis.value,
+                      decoration: const InputDecoration(
+                        labelText: 'X Axis',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        DropdownMenuItem(value: 'voc', child: Text('VOC')),
+                        DropdownMenuItem(value: 'temperature', child: Text('Temperature')),
+                        DropdownMenuItem(value: 'pressure', child: Text('Pressure')),
+                        DropdownMenuItem(value: 'humidity', child: Text('Humidity')),
+                      ],
+                      onChanged: (value) {
+                        if (value != null) {
+                          widget.controller.selectedXAxis.value = value;
+                        }
+                      },
                     ),
-                    items: const [
-                      DropdownMenuItem(value: 'voc', child: Text('VOC')),
-                      DropdownMenuItem(value: 'temperature', child: Text('Temperature')),
-                      DropdownMenuItem(value: 'pressure', child: Text('Pressure')),
-                      DropdownMenuItem(value: 'humidity', child: Text('Humidity')),
-                    ],
-                    onChanged: (value) {
-                      if (value != null) {
-                        widget.controller.selectedXAxis.value = value;
-                      }
-                    },
                   ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: DropdownButtonFormField<String>(
-                    value: widget.controller.selectedYAxis.value,
-                    decoration: const InputDecoration(
-                      labelText: 'Y Axis',
-                      border: OutlineInputBorder(),
+                  child: GetX<BleController>( // Wrap with GetX
+                    builder: (_) => DropdownButtonFormField<String>(
+                      value: widget.controller.selectedYAxis.value,
+                      decoration: const InputDecoration(
+                        labelText: 'Y Axis',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        DropdownMenuItem(value: 'temperature', child: Text('Temperature')),
+                        DropdownMenuItem(value: 'voc', child: Text('VOC')),
+                        DropdownMenuItem(value: 'pressure', child: Text('Pressure')),
+                        DropdownMenuItem(value: 'humidity', child: Text('Humidity')),
+                      ],
+                      onChanged: (value) {
+                        if (value != null) {
+                          widget.controller.selectedYAxis.value = value;
+                        }
+                      },
                     ),
-                    items: const [
-                      DropdownMenuItem(value: 'temperature', child: Text('Temperature')),
-                      DropdownMenuItem(value: 'voc', child: Text('VOC')),
-                      DropdownMenuItem(value: 'pressure', child: Text('Pressure')),
-                      DropdownMenuItem(value: 'humidity', child: Text('Humidity')),
-                    ],
-                    onChanged: (value) {
-                      if (value != null) {
-                        widget.controller.selectedYAxis.value = value;
-                      }
-                    },
                   ),
                 ),
               ],
@@ -202,63 +217,72 @@ class DeviceDataScreenState extends State<DeviceDataScreen> {
           ),
           SizedBox(
             height: 400,
-            child: Obx(() {
-              List<ScatterSeries<EnvironmentalDataPoint, double>> series = [];
+            child: GetX<BleController>( // Wrap with GetX
+              builder: (_) {
+                List<ScatterSeries<EnvironmentalDataPoint, double>> series = [];
 
-              widget.controller.clusterResults.forEach((clusterId, points) {
-                series.add(
-                  ScatterSeries<EnvironmentalDataPoint, double>(
-                    name: 'Cluster $clusterId',
-                    dataSource: points,
-                    xValueMapper: (EnvironmentalDataPoint point, _) =>
-                        widget.controller.getAxisValue(point, widget.controller.selectedXAxis.value),
-                    yValueMapper: (EnvironmentalDataPoint point, _) =>
-                        widget.controller.getAxisValue(point, widget.controller.selectedYAxis.value),
-                    color: widget.controller.clusterColors[clusterId % widget.controller.clusterColors.length],
-                    markerSettings: const MarkerSettings(height: 8, width: 8),
-                    dataLabelSettings: const DataLabelSettings(isVisible: false),
+                widget.controller.clusterResults.forEach((clusterId, points) {
+                  series.add(
+                    ScatterSeries<EnvironmentalDataPoint, double>(
+                      name: 'Cluster $clusterId',
+                      dataSource: points,
+                      xValueMapper: (EnvironmentalDataPoint point, _) =>
+                          widget.controller.getAxisValue(point, widget.controller.selectedXAxis.value),
+                      yValueMapper: (EnvironmentalDataPoint point, _) =>
+                          widget.controller.getAxisValue(point, widget.controller.selectedYAxis.value),
+                      color: widget.controller.getClusterColor(clusterId),
+                      markerSettings: const MarkerSettings(height: 8, width: 8),
+                      dataLabelSettings: const DataLabelSettings(isVisible: false),
+                    ),
+                  );
+                });
+
+                if (widget.controller.noisePoints.isNotEmpty) {
+                  series.add(
+                    ScatterSeries<EnvironmentalDataPoint, double>(
+                      name: 'Noise',
+                      dataSource: widget.controller.noisePoints.toList(),
+                      xValueMapper: (EnvironmentalDataPoint point, _) =>
+                          widget.controller.getAxisValue(point, widget.controller.selectedXAxis.value),
+                      yValueMapper: (EnvironmentalDataPoint point, _) =>
+                          widget.controller.getAxisValue(point, widget.controller.selectedYAxis.value),
+                      color: Colors.grey,
+                      markerSettings: const MarkerSettings(height: 6, width: 6),
+                    ),
+                  );
+                }
+
+                Map<String, double> xRange = widget.controller.getAxisRange(widget.controller.selectedXAxis.value);
+                Map<String, double> yRange = widget.controller.getAxisRange(widget.controller.selectedYAxis.value);
+
+                return SfCartesianChart(
+                  primaryXAxis: NumericAxis(
+                    title: AxisTitle(
+                      text: '${widget.controller.selectedXAxis.value.toUpperCase()} '
+                          '(${widget.controller.getAxisUnit(widget.controller.selectedXAxis.value)})',
+                    ),
+                    minimum: xRange['min'],
+                    maximum: xRange['max'],
                   ),
+                  primaryYAxis: NumericAxis(
+                    title: AxisTitle(
+                      text: '${widget.controller.selectedYAxis.value.toUpperCase()} '
+                          '(${widget.controller.getAxisUnit(widget.controller.selectedYAxis.value)})',
+                    ),
+                    minimum: yRange['min'],
+                    maximum: yRange['max'],
+                  ),
+                  series: series,
+                  title: const ChartTitle(text: 'Cluster Analysis'),
+                  legend: const Legend(
+                    isVisible: true,
+                    position: LegendPosition.bottom,
+                  ),
+                  tooltipBehavior: _tooltipBehavior,
+                  zoomPanBehavior: _zoomPanBehaviorScatter,
                 );
-              });
-
-              if (widget.controller.noisePoints.isNotEmpty) {
-                series.add(
-                  ScatterSeries<EnvironmentalDataPoint, double>(
-                    name: 'Noise',
-                    dataSource: widget.controller.noisePoints,
-                    xValueMapper: (EnvironmentalDataPoint point, _) =>
-                        widget.controller.getAxisValue(point, widget.controller.selectedXAxis.value),
-                    yValueMapper: (EnvironmentalDataPoint point, _) =>
-                        widget.controller.getAxisValue(point, widget.controller.selectedYAxis.value),
-                    color: Colors.grey,
-                    markerSettings: const MarkerSettings(height: 6, width: 6),
-                  ),
-                );
-              }
-
-              return SfCartesianChart(
-                primaryXAxis: NumericAxis(
-                  title: AxisTitle(
-                    text: '${widget.controller.selectedXAxis.value.toUpperCase()} '
-                        '(${widget.controller.getAxisUnit(widget.controller.selectedXAxis.value)})',
-                  ),
-                ),
-                primaryYAxis: NumericAxis(
-                  title: AxisTitle(
-                    text: '${widget.controller.selectedYAxis.value.toUpperCase()} '
-                        '(${widget.controller.getAxisUnit(widget.controller.selectedYAxis.value)})',
-                  ),
-                ),
-                series: series,
-                title: const ChartTitle(text: 'Cluster Analysis'),
-                legend: const Legend(
-                  isVisible: true,
-                  position: LegendPosition.bottom,
-                ),
-                tooltipBehavior: _tooltipBehavior,
-                zoomPanBehavior: _zoomPanBehaviorScatter,
-              );
-            }),
+              },
+            ),
           ),
         ],
       ),
@@ -266,11 +290,9 @@ class DeviceDataScreenState extends State<DeviceDataScreen> {
   }
 
   Widget _buildClusterCard(int clusterId, List<EnvironmentalDataPoint> points) {
-    final color = clusterId >= 0
-        ? widget.controller.clusterColors[clusterId % widget.controller.clusterColors.length]
-        : Colors.grey;
-
+    final color = widget.controller.getClusterColor(clusterId);
     final stats = widget.controller.getClusterStatistics(points);
+    final correlations = widget.controller.getFeatureCorrelations(points);
 
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
@@ -291,6 +313,12 @@ class DeviceDataScreenState extends State<DeviceDataScreen> {
                 _buildStatRow('Temperature', stats['avgTemperature']!, '°C'),
                 _buildStatRow('Humidity', stats['avgHumidity']!, '%'),
                 _buildStatRow('Pressure', stats['avgPressure']!, 'hPa'),
+                const SizedBox(height: 8),
+                const Divider(),
+                const Text('Correlations:', style: TextStyle(fontWeight: FontWeight.bold)),
+                _buildCorrelationRow('VOC-Temperature', correlations['voc_temperature']!),
+                _buildCorrelationRow('VOC-Humidity', correlations['voc_humidity']!),
+                _buildCorrelationRow('VOC-Pressure', correlations['voc_pressure']!),
                 const SizedBox(height: 8),
                 LinearProgressIndicator(
                   value: points.length / widget.controller.environmentalDataPoints.length,
@@ -323,196 +351,233 @@ class DeviceDataScreenState extends State<DeviceDataScreen> {
     );
   }
 
+  Widget _buildCorrelationRow(String label, double value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label),
+          Text(value.toStringAsFixed(3)),
+        ],
+      ),
+    );
+  }
+
   Widget _buildLineChart({
     required String title,
     required RxList<double> data,
     required String yAxisTitle,
     required ZoomPanBehavior zoomPanBehavior,
   }) {
-    return Obx(() => SizedBox(
-      height: 300,
-      child: SfCartesianChart(
-        primaryXAxis: const NumericAxis(
-          title: AxisTitle(text: 'Time (s)'),
-        ),
-        primaryYAxis: NumericAxis(
-          title: AxisTitle(text: yAxisTitle),
-        ),
-        series: <LineSeries<double, double>>[
-          LineSeries<double, double>(
-            dataSource: data.toList(),
-            xValueMapper: (double value, int index) => index.toDouble(),
-            yValueMapper: (double value, int index) => value,
-            name: title,
-            dataLabelSettings: const DataLabelSettings(isVisible: false),
+    return GetX<BleController>( // Wrap with GetX
+      builder: (_) => SizedBox(
+        height: 300,
+        child: SfCartesianChart(
+          primaryXAxis: const NumericAxis(
+            title: AxisTitle(text: 'Time (s)'),
           ),
-        ],
-        title: ChartTitle(text: title),
-        legend: const Legend(isVisible: true),
-        tooltipBehavior: TooltipBehavior(enable: true),
-        zoomPanBehavior: zoomPanBehavior,
+          primaryYAxis: NumericAxis(
+            title: AxisTitle(text: yAxisTitle),
+          ),
+          series: <LineSeries<double, double>>[
+            LineSeries<double, double>(
+              dataSource: data.toList(), // Convert RxList to List
+              xValueMapper: (double value, int index) => index.toDouble(),
+              yValueMapper: (double value, _) => value,
+              name: title,
+              dataLabelSettings: const DataLabelSettings(isVisible: false),
+            ),
+          ],
+          title: ChartTitle(text: title),
+          legend: const Legend(isVisible: true),
+          tooltipBehavior: TooltipBehavior(enable: true),
+          zoomPanBehavior: zoomPanBehavior,
+        ),
       ),
-    ));
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-        appBar: AppBar(
-        title: const Text('Air Quality Data'),
-    actions: [
-    IconButton(
-    icon: const Icon(Icons.refresh),
-    onPressed: () => widget.controller.runDBSCANAnalysis(),
-    ),
-    IconButton(
-    icon: const Icon(Icons.share),
-    onPressed: () {
-    final scaffoldMessenger = ScaffoldMessenger.of(context);
-    final report = widget.controller.exportClusterData();
+      appBar: AppBar(
+          title: const Text('Air Quality Data'),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.share),
+              onPressed: () {
+                // Store context in a local variable
+                final scaffoldMessenger = ScaffoldMessenger.of(context);
+                final report = widget.controller.exportClusterData();
 
-    Share.share(
-    report,
-    subject: 'Cluster Analysis Report ${DateTime.now().toString().split('.')[0]}',
-    ).catchError((error) {
-    scaffoldMessenger.showSnackBar(
-    SnackBar(
-    content: Text('Failed to share report: $error'),
-    backgroundColor: Colors.red,
-    ),
-    );
-    return null;
-    });
-    },
-    ),
-    ],
-    ),
-    body: SingleChildScrollView(
-    child: Column(
-    children: [
-    // Current Values Section
-    Card(
-    margin: const EdgeInsets.all(8),
-    child: Padding(
-    padding: const EdgeInsets.all(16),
-    child: Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-    const Text(
-    'Current Readings',
-    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-    ),
-    const SizedBox(height: 12),
-    Obx(() => Column(
-    children: [
-    Text(widget.controller.airQualityVOC.value),
-    Text('Temperature: ${widget.controller.temperature.value.toStringAsFixed(2)} °C'),
-    Text('Humidity: ${widget.controller.humidity.value.toStringAsFixed(2)} %'),
-    Text('Pressure: ${widget.controller.pressure.value.toStringAsFixed(2)} hPa'),
-    ],
-    )),
-    ],
-    ),
-    ),
-    ),
-
-    // Add Clustering Controls
-      ClusteringControls(controller: widget.controller),
-
-      // Clustering Analysis Section
-      _buildScatterPlot(),
-
-      // Cluster Statistics Section
-      Card(
-        margin: const EdgeInsets.all(8),
+                // Use the stored context reference
+                Share.share(
+                  report,
+                  subject: 'Cluster Analysis Report ${DateTime.now().toString().split('.')[0]}',
+                ).catchError((error) {
+                  scaffoldMessenger.showSnackBar(
+                    SnackBar(
+                      content: Text('Failed to share report: $error'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                  return null;
+                });
+              },
+            ),
+          ],
+      ),
+      body: SingleChildScrollView(
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Current Values Section
+            Card(
+              margin: const EdgeInsets.all(8),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Current Readings',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 12),
+                    Obx(() => Column(
+                      children: [
+                        Text(widget.controller.airQualityVOC.value),
+                        Text('Temperature: ${widget.controller.temperature.value.toStringAsFixed(2)} °C'),
+                        Text('Humidity: ${widget.controller.humidity.value.toStringAsFixed(2)} %'),
+                        Text('Pressure: ${widget.controller.pressure.value.toStringAsFixed(2)} hPa'),
+                        if (widget.controller.batteryLevel.value > 0)
+                          Text('Battery: ${widget.controller.batteryLevel.value}%'),
+                        if (widget.controller.pmDetails.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          const Text('Particulate Matter:'),
+                          ...widget.controller.pmDetails.entries.map(
+                                (e) => Text('${e.key}: ${e.value.toStringAsFixed(1)} µg/m³'),
+                          ),
+                        ],
+                      ],
+                    )),
+                  ],
+                ),
+              ),
+            ),
+
+            // Clustering Controls
+            ClusteringControls(controller: widget.controller),
+
+            // Clustering Analysis Section
+            _buildScatterPlot(),
+
+            // Cluster Statistics Section
+            Card(
+              margin: const EdgeInsets.all(8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Cluster Analysis',
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                        ),
+                        Text(
+                          '${widget.controller.environmentalDataPoints.length} total points',
+                          style: TextStyle(color: Colors.grey[600]),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Obx(() {
+                    if (widget.controller.clusterResults.isEmpty) {
+                      return const Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Text(
+                          'Collecting data for clustering analysis...',
+                          style: TextStyle(fontStyle: FontStyle.italic),
+                        ),
+                      );
+                    }
+                    return Column(
+                      children: [
+                        ...widget.controller.clusterResults.entries
+                            .map((entry) => _buildClusterCard(entry.key, entry.value)),
+                        if (widget.controller.noisePoints.isNotEmpty)
+                          _buildClusterCard(-1, widget.controller.noisePoints),
+                      ],
+                    );
+                  }),
+                ],
+              ),
+            ),
+
+            // Historical Data Charts
             Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              padding: const EdgeInsets.all(8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Cluster Analysis',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  const Padding(
+                    padding: EdgeInsets.all(8),
+                    child: Text(
+                      'Historical Data',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
                   ),
-                  Text(
-                    '${widget.controller.environmentalDataPoints.length} total points',
-                    style: TextStyle(color: Colors.grey[600]),
+                  _buildLineChart(
+                    title: 'VOC Levels',
+                    data: widget.controller.vocData,
+                    yAxisTitle: 'VOC (ppb)',
+                    zoomPanBehavior: _zoomPanBehaviorVOC,
+                  ),
+                  const SizedBox(height: 20),
+                  _buildLineChart(
+                    title: 'Temperature',
+                    data: widget.controller.tempData,
+                    yAxisTitle: 'Temperature (°C)',
+                    zoomPanBehavior: _zoomPanBehaviorTemp,
+                  ),
+                  const SizedBox(height: 20),
+                  _buildLineChart(
+                    title: 'Humidity',
+                    data: widget.controller.humidityData,
+                    yAxisTitle: 'Humidity (%)',
+                    zoomPanBehavior: _zoomPanBehaviorHumidity,
+                  ),
+                  const SizedBox(height: 20),
+                  _buildLineChart(
+                    title: 'Pressure',
+                    data: widget.controller.pressureData,
+                    yAxisTitle: 'Pressure (hPa)',
+                    zoomPanBehavior: _zoomPanBehaviorPressure,
                   ),
                 ],
               ),
             ),
-            Obx(() {
-              if (widget.controller.clusterResults.isEmpty) {
-                return const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Text(
-                    'Collecting data for clustering analysis...',
-                    style: TextStyle(fontStyle: FontStyle.italic),
-                  ),
-                );
-              }
-              return Column(
-                children: [
-                  ...widget.controller.clusterResults.entries
-                      .map((entry) => _buildClusterCard(entry.key, entry.value)),
-                  if (widget.controller.noisePoints.isNotEmpty)
-                    _buildClusterCard(-1, widget.controller.noisePoints),
-                ],
-              );
-            }),
           ],
         ),
       ),
-
-      // Historical Data Charts
-      Padding(
-        padding: const EdgeInsets.all(8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Padding(
-              padding: EdgeInsets.all(8),
-              child: Text(
-                'Historical Data',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-            ),
-            _buildLineChart(
-              title: 'VOC Levels',
-              data: widget.controller.vocData,
-              yAxisTitle: 'VOC (ppb)',
-              zoomPanBehavior: _zoomPanBehaviorVOC,
-            ),
-            const SizedBox(height: 20),
-            _buildLineChart(
-              title: 'Temperature',
-              data: widget.controller.tempData,
-              yAxisTitle: 'Temperature (°C)',
-              zoomPanBehavior: _zoomPanBehaviorTemp,
-            ),
-            const SizedBox(height: 20),
-            _buildLineChart(
-              title: 'Humidity',
-              data: widget.controller.humidityData,
-              yAxisTitle: 'Humidity (%)',
-              zoomPanBehavior: _zoomPanBehaviorHumidity,
-            ),
-            const SizedBox(height: 20),
-            _buildLineChart(
-              title: 'Pressure',
-              data: widget.controller.pressureData,
-              yAxisTitle: 'Pressure (hPa)',
-              zoomPanBehavior: _zoomPanBehaviorHumidity,
-            ),
-          ],
-        ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () {
+          widget.controller.clearData();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Data cleared')),
+          );
+        },
+        tooltip: 'Clear Data',
+        child: const Icon(Icons.clear_all),
       ),
-    ],
-    ),
-    ),
     );
+  }
+
+  @override
+  void dispose() {
+    super.dispose();
   }
 }

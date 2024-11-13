@@ -1,14 +1,12 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_blue/flutter_blue.dart';
 import 'package:get/get.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:logger/logger.dart';
-import 'package:http/http.dart' as http;
+import 'ml_service.dart';
 import 'dart:async';
-import 'dart:convert';
 import 'dart:math';
+
 
 class BleController extends GetxController {
   FlutterBlue ble = FlutterBlue.instance;
@@ -34,10 +32,7 @@ class BleController extends GetxController {
   var clusterResults = RxMap<int, List<EnvironmentalDataPoint>>();
   var noisePoints = RxList<EnvironmentalDataPoint>();
 
-  // API-related variables
-  final String apiUrl = 'http://192.168.1.82:8000'; // For Android Emulator
-  // Use 'http://localhost:8000' for iOS simulator
-  // Use actual IP address for physical device
+  // ONNX-related variables
   var isAnalyzing = false.obs;
   var analysisError = RxString('');
 
@@ -130,7 +125,6 @@ class BleController extends GetxController {
     pollingTimer?.cancel();
     logger.d("Stopped polling.");
   }
-
   Future<void> pollDeviceForData() async {
     if (connectedDevice == null) return;
 
@@ -243,7 +237,6 @@ class BleController extends GetxController {
     }
   }
 
-  // DBSCAN Analysis with API integration
   Future<void> runDBSCANAnalysis() async {
     if (environmentalDataPoints.isEmpty) {
       logger.w('No data points available for analysis');
@@ -254,41 +247,53 @@ class BleController extends GetxController {
       isAnalyzing.value = true;
       analysisError.value = '';
 
-      // Prepare data for API
-      final dataPoints = environmentalDataPoints.map((point) => {
-        'voc': point.voc,
-        'temperature': point.temperature,
-        'pressure': point.pressure,
-        'humidity': point.humidity,
-        'timestamp': point.timestamp.toIso8601String(),
-      }).toList();
+      // Convert data points to format expected by ML service
+      final points = environmentalDataPoints.map((point) => [
+        point.voc,
+        point.temperature,
+        point.pressure,
+        point.humidity,
+      ]).toList();
 
-      final requestBody = {
-        'data_points': dataPoints,
-        'eps': epsilon.value,
-        'min_samples': minPoints.value
-      };
+      // Run clustering
+      final predictions = MlService.runClustering(points);
 
-      logger.d('Sending ${dataPoints.length} points for analysis');
+      // Process predictions
+      final newClusterResults = <int, List<EnvironmentalDataPoint>>{};
+      final newNoisePoints = <EnvironmentalDataPoint>[];
 
-      // Make API request
-      final response = await http.post(
-        Uri.parse('$apiUrl/cluster'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(requestBody),
-      ).timeout(
-        const Duration(seconds: 60),
-        onTimeout: () {
-          throw TimeoutException('Analysis request timed out');
-        },
-      );
+      // Group points by their predicted clusters
+      for (int i = 0; i < predictions.length; i++) {
+        final clusterId = predictions[i];
+        final point = environmentalDataPoints[i];
 
-      if (response.statusCode == 200) {
-        final result = jsonDecode(response.body);
-        await _processClusteringResults(result);
-      } else {
-        throw HttpException('Error ${response.statusCode}: ${response.body}');
+        // Validate prediction using sample data
+        if (!MlService.validatePrediction(
+            [point.voc, point.temperature, point.pressure, point.humidity],
+            clusterId
+        )) {
+          logger.w('Potentially incorrect clustering for point $i');
+        }
+
+        final newPoint = point.copyWith(clusterId: clusterId);
+
+        if (clusterId == -1) {
+          newNoisePoints.add(newPoint);
+        } else {
+          if (!newClusterResults.containsKey(clusterId)) {
+            newClusterResults[clusterId] = [];
+          }
+          newClusterResults[clusterId]!.add(newPoint);
+        }
       }
+
+      // Update observable state
+      clusterResults.value = newClusterResults;
+      noisePoints.value = newNoisePoints;
+
+      // Calculate and log statistics
+      _calculateAndLogStatistics(newClusterResults, newNoisePoints);
+
     } catch (e, stackTrace) {
       logger.e('Error during clustering analysis: $e');
       logger.e(stackTrace.toString());
@@ -298,66 +303,65 @@ class BleController extends GetxController {
     }
   }
 
-  Future<void> _processClusteringResults(Map<String, dynamic> result) async {
-    try {
-      final newClusterResults = <int, List<EnvironmentalDataPoint>>{};
+  void _calculateAndLogStatistics(
+      Map<int, List<EnvironmentalDataPoint>> clusters,
+      List<EnvironmentalDataPoint> noisePoints
+      ) {
+    // Calculate statistics for each cluster
+    clusters.forEach((clusterId, points) {
+      final stats = _calculateClusterStats(points);
+      logger.i('\nCluster $clusterId Analysis:');
+      _logStats(stats, points.length);
+    });
 
-      final clusters = result['clusters'] as Map<String, dynamic>;
-      clusters.forEach((key, value) {
-        int clusterId = int.parse(key);
-        List<dynamic> points = value as List;
-
-        newClusterResults[clusterId] = points.map((p) =>
-            EnvironmentalDataPoint(
-              voc: p['voc'].toDouble(),
-              temperature: p['temperature'].toDouble(),
-              pressure: p['pressure'].toDouble(),
-              humidity: p['humidity'].toDouble(),
-              timestamp: DateTime.parse(p['timestamp']),
-              clusterId: clusterId,
-            )).toList();
-      });
-
-      final noisePointsList = result['noise_points'] as List;
-      final newNoisePoints = noisePointsList.map((p) =>
-          EnvironmentalDataPoint(
-            voc: p['voc'].toDouble(),
-            temperature: p['temperature'].toDouble(),
-            pressure: p['pressure'].toDouble(),
-            humidity: p['humidity'].toDouble(),
-            timestamp: DateTime.parse(p['timestamp']),
-            clusterId: -1,
-          )).toList();
-
-      clusterResults.value = newClusterResults;
-      noisePoints.value = newNoisePoints;
-
-      _logAnalysisResults(result['statistics'] as Map<String, dynamic>);
-    } catch (e, stackTrace) {
-      logger.e('Error processing clustering results: $e');
-      logger.e(stackTrace.toString());
-      throw Exception('Failed to process clustering results: $e');
+    // Calculate statistics for noise points
+    if (noisePoints.isNotEmpty) {
+      final stats = _calculateClusterStats(noisePoints);
+      logger.i('\nNoise Points Analysis:');
+      _logStats(stats, noisePoints.length);
     }
   }
 
-  void _logAnalysisResults(Map<String, dynamic> statistics) {
-    statistics.forEach((clusterId, stats) {
-      String clusterType = clusterId == '-1' ? 'Noise' : 'Cluster $clusterId';
-      logger.i('\n$clusterType Analysis:');
-      logger.i('Size: ${stats['size']}');
+  Map<String, double> _calculateClusterStats(List<EnvironmentalDataPoint> points) {
+    if (points.isEmpty) return {};
 
-      logger.i('VOC: ${stats['avg_voc']?.toStringAsFixed(2)} ± '
-          '${stats['std_voc']?.toStringAsFixed(2)} ppb');
-      logger.i('Temperature: ${stats['avg_temperature']?.toStringAsFixed(2)} ± '
-          '${stats['std_temperature']?.toStringAsFixed(2)} °C');
-      logger.i('Humidity: ${stats['avg_humidity']?.toStringAsFixed(2)} ± '
-          '${stats['std_humidity']?.toStringAsFixed(2)} %');
-      logger.i('Pressure: ${stats['avg_pressure']?.toStringAsFixed(2)} ± '
-          '${stats['std_pressure']?.toStringAsFixed(2)} hPa');
-    });
+    double meanVOC = points.map((p) => p.voc).reduce((a, b) => a + b) / points.length;
+    double meanTemp = points.map((p) => p.temperature).reduce((a, b) => a + b) / points.length;
+    double meanPressure = points.map((p) => p.pressure).reduce((a, b) => a + b) / points.length;
+    double meanHumidity = points.map((p) => p.humidity).reduce((a, b) => a + b) / points.length;
+
+    double stdVOC = _calculateStdDev(points.map((p) => p.voc).toList(), meanVOC);
+    double stdTemp = _calculateStdDev(points.map((p) => p.temperature).toList(), meanTemp);
+    double stdPressure = _calculateStdDev(points.map((p) => p.pressure).toList(), meanPressure);
+    double stdHumidity = _calculateStdDev(points.map((p) => p.humidity).toList(), meanHumidity);
+
+    return {
+      'avg_voc': meanVOC,
+      'std_voc': stdVOC,
+      'avg_temperature': meanTemp,
+      'std_temperature': stdTemp,
+      'avg_pressure': meanPressure,
+      'std_pressure': stdPressure,
+      'avg_humidity': meanHumidity,
+      'std_humidity': stdHumidity,
+    };
   }
 
-  // Helper methods
+  double _calculateStdDev(List<double> values, double mean) {
+    if (values.isEmpty) return 0.0;
+    num sumSquaredDiff = values.map((x) => pow(x - mean, 2)).reduce((a, b) => a + b);
+    return sqrt(sumSquaredDiff / values.length);
+  }
+
+  void _logStats(Map<String, double> stats, int size) {
+    logger.i('Size: $size points');
+    logger.i('VOC: ${stats['avg_voc']?.toStringAsFixed(2)} ± ${stats['std_voc']?.toStringAsFixed(2)} ppb');
+    logger.i('Temperature: ${stats['avg_temperature']?.toStringAsFixed(2)} ± ${stats['std_temperature']?.toStringAsFixed(2)} °C');
+    logger.i('Pressure: ${stats['avg_pressure']?.toStringAsFixed(2)} ± ${stats['std_pressure']?.toStringAsFixed(2)} hPa');
+    logger.i('Humidity: ${stats['avg_humidity']?.toStringAsFixed(2)} ± ${stats['std_humidity']?.toStringAsFixed(2)} %');
+  }
+
+// Helper methods
   void updateClusteringParameters({double? newEpsilon, int? newMinPoints}) {
     if (newEpsilon != null) epsilon.value = newEpsilon;
     if (newMinPoints != null) minPoints.value = newMinPoints;
@@ -381,11 +385,11 @@ class BleController extends GetxController {
 
   String getAxisUnit(String axis) {
     switch (axis) {
-    case 'voc': return 'ppb';
-    case 'temperature': return '°C';
-    case 'pressure': return 'hPa';
-    case 'humidity': return '%';
-    default: return '';
+      case 'voc': return 'ppb';
+      case 'temperature': return '°C';
+      case 'pressure': return 'hPa';
+      case 'humidity': return '%';
+      default: return '';
     }
   }
 
@@ -501,7 +505,6 @@ class BleController extends GetxController {
     };
   }
 
-  // Correlation analysis methods
   double _calculateCorrelation(List<double> x, List<double> y) {
     if (x.length != y.length || x.isEmpty) return 0;
 
@@ -557,4 +560,22 @@ class EnvironmentalDataPoint {
     DateTime? timestamp,
     this.clusterId,
   }) : timestamp = timestamp ?? DateTime.now();
+
+  EnvironmentalDataPoint copyWith({
+    double? voc,
+    double? temperature,
+    double? pressure,
+    double? humidity,
+    DateTime? timestamp,
+    int? clusterId,
+  }) {
+    return EnvironmentalDataPoint(
+      voc: voc ?? this.voc,
+      temperature: temperature ?? this.temperature,
+      pressure: pressure ?? this.pressure,
+      humidity: humidity ?? this.humidity,
+      timestamp: timestamp ?? this.timestamp,
+      clusterId: clusterId ?? this.clusterId,
+    );
+  }
 }

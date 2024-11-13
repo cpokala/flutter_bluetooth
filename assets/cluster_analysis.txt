@@ -1,0 +1,13 @@
+=== Cluster Analysis ===
+
+Cluster Noise:
+Size: 200 points
+Features:
+  VOC: 177.70 ± 78.91 ppb
+    Range: [25.15, 346.72] ppb
+  Temperature: 25.38 ± 3.07 °C
+    Range: [19.24, 31.76] °C
+  Pressure: 1013.02 ± 7.66 hPa
+    Range: [1000.27, 1024.99] hPa
+  Humidity: 50.83 ± 13.39 %
+    Range: [25.80, 79.60] %
