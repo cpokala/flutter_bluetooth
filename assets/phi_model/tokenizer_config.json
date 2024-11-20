@@ -1,0 +1,8 @@
+{
+  "model_max_length": 2048,
+  "padding_side": "right",
+  "truncation_side": "right",
+  "pad_token": "[PAD]",
+  "eos_token": "</s>",
+  "unk_token": "[UNK]"
+}
