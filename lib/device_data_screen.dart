@@ -25,7 +25,7 @@ class ClusteringControls extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 const Text(
-                  'Clustering Controls',
+                  'Clustering Analysis',
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
@@ -42,47 +42,7 @@ class ClusteringControls extends StatelessWidget {
             ),
             const SizedBox(height: 16),
 
-            // Epsilon control
-            Row(
-              children: [
-                const Text('Epsilon:'),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Obx(() => Slider(
-                    value: controller.epsilon.value,
-                    min: 0.1,
-                    max: 1.0,
-                    divisions: 18,
-                    label: controller.epsilon.value.toStringAsFixed(2),
-                    onChanged: (value) => controller.updateClusteringParameters(
-                      newEpsilon: value,
-                    ),
-                  )),
-                ),
-              ],
-            ),
-
-            // Min points control
-            Row(
-              children: [
-                const Text('Min Points:'),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Obx(() => Slider(
-                    value: controller.minPoints.value.toDouble(),
-                    min: 2,
-                    max: 10,
-                    divisions: 8,
-                    label: controller.minPoints.value.toString(),
-                    onChanged: (value) => controller.updateClusteringParameters(
-                      newMinPoints: value.toInt(),
-                    ),
-                  )),
-                ),
-              ],
-            ),
-
-            // Error message
+            // Status and information
             Obx(() => controller.analysisError.value.isNotEmpty
                 ? Padding(
               padding: const EdgeInsets.only(top: 8),
@@ -94,7 +54,13 @@ class ClusteringControls extends StatelessWidget {
                 ),
               ),
             )
-                : const SizedBox.shrink(),
+                : const Text(
+              'Clustering parameters are automatically optimized based on the data distribution.',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey,
+              ),
+            ),
             ),
           ],
         ),
@@ -102,6 +68,7 @@ class ClusteringControls extends StatelessWidget {
     );
   }
 }
+
 
 class DeviceDataScreen extends StatefulWidget {
   final BleController controller;
@@ -290,9 +257,23 @@ class DeviceDataScreenState extends State<DeviceDataScreen> {
   }
 
   Widget _buildClusterCard(int clusterId, List<EnvironmentalDataPoint> points) {
+    // Null safety checks
+    if (points.isEmpty) return const SizedBox.shrink();
+
     final color = widget.controller.getClusterColor(clusterId);
     final stats = widget.controller.getClusterStatistics(points);
     final correlations = widget.controller.getFeatureCorrelations(points);
+
+    // Null-safe access with default values
+    final avgVoc = stats['avgVoc'] ?? 0.0;
+    final avgTemp = stats['avgTemperature'] ?? 0.0;
+    final avgHumidity = stats['avgHumidity'] ?? 0.0;
+    final avgPressure = stats['avgPressure'] ?? 0.0;
+
+    // Null-safe correlation access
+    final vocTemp = correlations['voc_temperature'] ?? 0.0;
+    final vocHumidity = correlations['voc_humidity'] ?? 0.0;
+    final vocPressure = correlations['voc_pressure'] ?? 0.0;
 
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
@@ -309,16 +290,16 @@ class DeviceDataScreenState extends State<DeviceDataScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _buildStatRow('VOC', stats['avgVoc']!, 'ppb'),
-                _buildStatRow('Temperature', stats['avgTemperature']!, '°C'),
-                _buildStatRow('Humidity', stats['avgHumidity']!, '%'),
-                _buildStatRow('Pressure', stats['avgPressure']!, 'hPa'),
+                _buildStatRow('VOC', avgVoc, 'ppb'),
+                _buildStatRow('Temperature', avgTemp, '°C'),
+                _buildStatRow('Humidity', avgHumidity, '%'),
+                _buildStatRow('Pressure', avgPressure, 'hPa'),
                 const SizedBox(height: 8),
                 const Divider(),
                 const Text('Correlations:', style: TextStyle(fontWeight: FontWeight.bold)),
-                _buildCorrelationRow('VOC-Temperature', correlations['voc_temperature']!),
-                _buildCorrelationRow('VOC-Humidity', correlations['voc_humidity']!),
-                _buildCorrelationRow('VOC-Pressure', correlations['voc_pressure']!),
+                _buildCorrelationRow('VOC-Temperature', vocTemp),
+                _buildCorrelationRow('VOC-Humidity', vocHumidity),
+                _buildCorrelationRow('VOC-Pressure', vocPressure),
                 const SizedBox(height: 8),
                 LinearProgressIndicator(
                   value: points.length / widget.controller.environmentalDataPoints.length,

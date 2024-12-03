@@ -7,42 +7,40 @@ import 'ml_service.dart';
 import 'dart:async';
 import 'dart:math';
 
-
 class BleController extends GetxController {
   FlutterBlue ble = FlutterBlue.instance;
   BluetoothDevice? connectedDevice;
-  var logger = Logger();
+  final logger = Logger();
 
   // Observable variables for real-time data
-  var airQualityVOC = RxString('VOC: 0 ppb');
-  var temperature = RxDouble(0.0);
-  var humidity = RxDouble(0.0);
-  var batteryLevel = RxInt(0);
-  var pmDetails = RxMap<String, double>();
-  var pressure = RxDouble(0.0);
+  final airQualityVOC = RxString('VOC: 0 ppb');
+  final temperature = RxDouble(0.0);
+  final humidity = RxDouble(0.0);
+  final batteryLevel = RxInt(0);
+  final pmDetails = RxMap<String, double>();
+  final pressure = RxDouble(0.0);
 
   // Historical data for line charts
-  var vocData = <double>[].obs;
-  var tempData = <double>[].obs;
-  var humidityData = <double>[].obs;
-  var pressureData = <double>[].obs;
+  final vocData = <double>[].obs;
+  final tempData = <double>[].obs;
+  final humidityData = <double>[].obs;
+  final pressureData = <double>[].obs;
 
   // Clustering data
-  var environmentalDataPoints = <EnvironmentalDataPoint>[].obs;
-  var clusterResults = RxMap<int, List<EnvironmentalDataPoint>>();
-  var noisePoints = RxList<EnvironmentalDataPoint>();
+  final environmentalDataPoints = <EnvironmentalDataPoint>[].obs;
+  final clusterResults = RxMap<int, List<EnvironmentalDataPoint>>();
+  final noisePoints = RxList<EnvironmentalDataPoint>();
 
-  // ONNX-related variables
-  var isAnalyzing = false.obs;
-  var analysisError = RxString('');
-
-  // DBSCAN parameters
-  var epsilon = 0.5.obs;
-  var minPoints = 5.obs;
+  // Analysis state
+  final isAnalyzing = false.obs;
+  final analysisError = RxString('');
 
   // Visualization controls
-  var selectedXAxis = 'voc'.obs;
-  var selectedYAxis = 'temperature'.obs;
+  final selectedXAxis = 'voc'.obs;
+  final selectedYAxis = 'temperature'.obs;
+
+  // Maximum number of data points to store
+  static const int maxDataPoints = 1000;
 
   // Cluster colors
   final clusterColors = [
@@ -68,29 +66,42 @@ class BleController extends GetxController {
   }
 
   Future<void> scanDevices() async {
-    if (await Permission.bluetoothScan.request().isGranted &&
-        await Permission.bluetoothConnect.request().isGranted &&
-        await Permission.bluetooth.request().isGranted) {
-      if (await ble.isScanning.first) {
-        return;
-      }
-
-      _scanResultsList.clear();
-      ble.scan(timeout: const Duration(seconds: 60)).listen((result) {
-        _scanResultsList.add(result);
-        _scanResultsController.add(_scanResultsList);
-      });
-
-      await Future.delayed(const Duration(seconds: 60));
-      ble.stopScan();
-    } else {
+    if (!await _checkPermissions()) {
       logger.e("Required permissions not granted.");
+      return;
     }
+
+    if (await ble.isScanning.first) return;
+
+    _scanResultsList.clear();
+    ble.scan(timeout: const Duration(seconds: 60)).listen((result) {
+      _scanResultsList.add(result);
+      _scanResultsController.add(_scanResultsList);
+    });
+
+    await Future.delayed(const Duration(seconds: 60));
+    ble.stopScan();
+  }
+
+  Future<bool> _checkPermissions() async {
+    var permissions = [
+      Permission.bluetoothScan,
+      Permission.bluetoothConnect,
+      Permission.bluetooth,
+    ];
+
+    for (var permission in permissions) {
+      if (!await permission.request().isGranted) {
+        return false;
+      }
+    }
+    return true;
   }
 
   Future<void> connectToDevice(BluetoothDevice device, BuildContext context) async {
     connectedDevice = device;
     var currentState = await device.state.first;
+
     if (currentState != BluetoothDeviceState.connected) {
       try {
         await device.connect(timeout: const Duration(seconds: 100));
@@ -125,115 +136,147 @@ class BleController extends GetxController {
     pollingTimer?.cancel();
     logger.d("Stopped polling.");
   }
+
   Future<void> pollDeviceForData() async {
     if (connectedDevice == null) return;
 
-    List<BluetoothService> services = await connectedDevice!.discoverServices();
+    try {
+      List<BluetoothService> services = await connectedDevice!.discoverServices();
 
-    final service = services.firstWhereOrNull(
-          (s) => s.uuid.toString().toLowerCase() == "db450001-8e9a-4818-add7-6ed94a328ab4".toLowerCase(),
-    );
+      final service = services.firstWhereOrNull(
+            (s) => s.uuid.toString().toLowerCase() == "db450001-8e9a-4818-add7-6ed94a328ab4".toLowerCase(),
+      );
 
-    if (service != null) {
-      await readCharacteristic(service, "db450002-8e9a-4818-add7-6ed94a328ab4", _updateAirQuality);
-      await readCharacteristic(service, "db450003-8e9a-4818-add7-6ed94a328ab4", _updateEnvironmental);
-      await readCharacteristic(service, "db450004-8e9a-4818-add7-6ed94a328ab4", _updateStatus);
-      await readCharacteristic(service, "db450005-8e9a-4818-add7-6ed94a328ab4", _updatePM);
-    } else {
-      logger.w("Service not found for polling");
+      if (service != null) {
+        await readCharacteristic(service, "db450002-8e9a-4818-add7-6ed94a328ab4", _updateAirQuality);
+        await readCharacteristic(service, "db450003-8e9a-4818-add7-6ed94a328ab4", _updateEnvironmental);
+        await readCharacteristic(service, "db450004-8e9a-4818-add7-6ed94a328ab4", _updateStatus);
+        await readCharacteristic(service, "db450005-8e9a-4818-add7-6ed94a328ab4", _updatePM);
+      } else {
+        logger.w("Service not found for polling");
+      }
+    } catch (e) {
+      logger.e("Error polling device: $e");
     }
   }
 
   Future<void> readCharacteristic(BluetoothService service, String charUuid, Function(List<int>) handler) async {
-    final characteristic = service.characteristics.firstWhereOrNull(
-          (c) => c.uuid.toString().toLowerCase() == charUuid.toLowerCase(),
-    );
+    try {
+      final characteristic = service.characteristics.firstWhereOrNull(
+            (c) => c.uuid.toString().toLowerCase() == charUuid.toLowerCase(),
+      );
 
-    if (characteristic != null && characteristic.properties.read) {
-      List<int> value = await characteristic.read();
-      logger.d("Data read for characteristic: $charUuid, Data: $value");
-      handler(value);
-    } else {
-      logger.w("Characteristic not found or read not supported: $charUuid");
+      if (characteristic != null && characteristic.properties.read) {
+        List<int> value = await characteristic.read();
+        logger.d("Data read for characteristic: $charUuid, Data: $value");
+        handler(value);
+      } else {
+        logger.w("Characteristic not found or read not supported: $charUuid");
+      }
+    } catch (e) {
+      logger.e("Error reading characteristic $charUuid: $e");
     }
   }
 
   void _updateAirQuality(List<int> value) {
-    logger.d("Air Quality data received: $value");
-    if (value.length == 4) {
-      final voc = (value[0] << 8) | value[1];
-      airQualityVOC.value = "VOC: ${(voc / 10).toStringAsFixed(2)} ppb";
+    try {
+      if (value.length == 4) {
+        final voc = (value[0] << 8) | value[1];
+        airQualityVOC.value = "VOC: ${(voc / 10).toStringAsFixed(2)} ppb";
 
-      if (vocData.length >= 50) vocData.removeAt(0);
-      vocData.add((voc / 10).toDouble());
+        if (vocData.length >= maxDataPoints) vocData.removeAt(0);
+        vocData.add((voc / 10).toDouble());
 
-      addEnvironmentalDataPoint();
-    } else {
-      logger.e("Invalid Air Quality Data Length: ${value.length}");
+        addEnvironmentalDataPoint();
+      } else {
+        logger.e("Invalid Air Quality Data Length: ${value.length}");
+      }
+    } catch (e) {
+      logger.e("Error updating air quality: $e");
     }
   }
 
   void _updateEnvironmental(List<int> value) {
-    logger.d("Environmental data received: $value");
-    if (value.length == 8) {
-      humidity.value = value[0].toDouble();
-      int temp = value[1];
-      int extendedTemp = (value[6] << 8) | value[7];
-      temperature.value = (temp + extendedTemp / 100.0) / 10.0;
-      pressure.value = ((value[2] << 24) | (value[3] << 16) | (value[4] << 8) | value[5]) / 100.0;
+    try {
+      if (value.length == 8) {
+        humidity.value = value[0].toDouble();
+        int temp = value[1];
+        int extendedTemp = (value[6] << 8) | value[7];
+        temperature.value = (temp + extendedTemp / 100.0) / 10.0;
+        pressure.value = ((value[2] << 24) | (value[3] << 16) | (value[4] << 8) | value[5]) / 100.0;
 
-      if (tempData.length >= 50) tempData.removeAt(0);
-      tempData.add(temperature.value);
-
-      if (humidityData.length >= 50) humidityData.removeAt(0);
-      humidityData.add(humidity.value);
-
-      if (pressureData.length >= 50) pressureData.removeAt(0);
-      pressureData.add(pressure.value);
-    } else {
-      logger.e("Invalid Environmental Data Length: ${value.length}");
+        _updateHistoricalData();
+      } else {
+        logger.e("Invalid Environmental Data Length: ${value.length}");
+      }
+    } catch (e) {
+      logger.e("Error updating environmental data: $e");
     }
   }
 
+  void _updateHistoricalData() {
+    if (tempData.length >= maxDataPoints) tempData.removeAt(0);
+    tempData.add(temperature.value);
+
+    if (humidityData.length >= maxDataPoints) humidityData.removeAt(0);
+    humidityData.add(humidity.value);
+
+    if (pressureData.length >= maxDataPoints) pressureData.removeAt(0);
+    pressureData.add(pressure.value);
+  }
+
   void _updateStatus(List<int> value) {
-    logger.d("Status data received: $value");
-    if (value.length == 2) {
-      batteryLevel.value = value[1];
-    } else {
-      logger.e("Invalid Status Data Length: ${value.length}");
+    try {
+      if (value.length == 2) {
+        batteryLevel.value = value[1];
+      } else {
+        logger.e("Invalid Status Data Length: ${value.length}");
+      }
+    } catch (e) {
+      logger.e("Error updating status: $e");
     }
   }
 
   void _updatePM(List<int> value) {
-    logger.d("PM data received: $value");
-    if (value.length == 12) {
-      pmDetails.value = {
-        "PM1": (value[0] << 8 | value[1]).toDouble(),
-        "PM2.5": (value[2] << 8 | value[3]).toDouble(),
-        "PM10": (value[4] << 8 | value[5]).toDouble(),
-        "PM4": (value[6] << 8 | value[7]).toDouble(),
-      };
-    } else {
-      logger.e("Invalid PM Data Length: ${value.length}");
+    try {
+      if (value.length == 12) {
+        pmDetails.value = {
+          "PM1": (value[0] << 8 | value[1]).toDouble(),
+          "PM2.5": (value[2] << 8 | value[3]).toDouble(),
+          "PM10": (value[4] << 8 | value[5]).toDouble(),
+          "PM4": (value[6] << 8 | value[7]).toDouble(),
+        };
+      } else {
+        logger.e("Invalid PM Data Length: ${value.length}");
+      }
+    } catch (e) {
+      logger.e("Error updating PM data: $e");
     }
   }
 
   void addEnvironmentalDataPoint() {
-    final vocValue = double.tryParse(
-        airQualityVOC.value.split(' ')[1]
-    ) ?? 0.0;
+    try {
+      final vocValue = double.tryParse(airQualityVOC.value.split(' ')[1]) ?? 0.0;
 
-    final dataPoint = EnvironmentalDataPoint(
-      voc: vocValue,
-      temperature: temperature.value,
-      pressure: pressure.value,
-      humidity: humidity.value,
-    );
+      final dataPoint = EnvironmentalDataPoint(
+        voc: vocValue,
+        temperature: temperature.value,
+        pressure: pressure.value,
+        humidity: humidity.value,
+      );
 
-    environmentalDataPoints.add(dataPoint);
+      if (environmentalDataPoints.length >= maxDataPoints) {
+        environmentalDataPoints.removeAt(0);
+      }
 
-    if (environmentalDataPoints.length >= 30) {
-      runDBSCANAnalysis();
+      environmentalDataPoints.add(dataPoint);
+
+      // Run clustering when we have enough data points
+      if (environmentalDataPoints.length >= 30) {
+        runDBSCANAnalysis();
+      }
+    } catch (e) {
+      logger.e("Error adding environmental data point: $e");
     }
   }
 
@@ -247,7 +290,6 @@ class BleController extends GetxController {
       isAnalyzing.value = true;
       analysisError.value = '';
 
-      // Convert data points to format expected by ML service
       final points = environmentalDataPoints.map((point) => [
         point.voc,
         point.temperature,
@@ -255,44 +297,9 @@ class BleController extends GetxController {
         point.humidity,
       ]).toList();
 
-      // Run clustering
       final predictions = MlService.runClustering(points);
 
-      // Process predictions
-      final newClusterResults = <int, List<EnvironmentalDataPoint>>{};
-      final newNoisePoints = <EnvironmentalDataPoint>[];
-
-      // Group points by their predicted clusters
-      for (int i = 0; i < predictions.length; i++) {
-        final clusterId = predictions[i];
-        final point = environmentalDataPoints[i];
-
-        // Validate prediction using sample data
-        if (!MlService.validatePrediction(
-            [point.voc, point.temperature, point.pressure, point.humidity],
-            clusterId
-        )) {
-          logger.w('Potentially incorrect clustering for point $i');
-        }
-
-        final newPoint = point.copyWith(clusterId: clusterId);
-
-        if (clusterId == -1) {
-          newNoisePoints.add(newPoint);
-        } else {
-          if (!newClusterResults.containsKey(clusterId)) {
-            newClusterResults[clusterId] = [];
-          }
-          newClusterResults[clusterId]!.add(newPoint);
-        }
-      }
-
-      // Update observable state
-      clusterResults.value = newClusterResults;
-      noisePoints.value = newNoisePoints;
-
-      // Calculate and log statistics
-      _calculateAndLogStatistics(newClusterResults, newNoisePoints);
+      _processClusteringResults(predictions);
 
     } catch (e, stackTrace) {
       logger.e('Error during clustering analysis: $e');
@@ -303,18 +310,38 @@ class BleController extends GetxController {
     }
   }
 
+  void _processClusteringResults(List<int> predictions) {
+    final newClusterResults = <int, List<EnvironmentalDataPoint>>{};
+    final newNoisePoints = <EnvironmentalDataPoint>[];
+
+    for (int i = 0; i < predictions.length; i++) {
+      final clusterId = predictions[i];
+      final point = environmentalDataPoints[i];
+      final newPoint = point.copyWith(clusterId: clusterId);
+
+      if (clusterId == -1) {
+        newNoisePoints.add(newPoint);
+      } else {
+        newClusterResults.putIfAbsent(clusterId, () => []).add(newPoint);
+      }
+    }
+
+    clusterResults.value = newClusterResults;
+    noisePoints.value = newNoisePoints;
+
+    _calculateAndLogStatistics(newClusterResults, newNoisePoints);
+  }
+
   void _calculateAndLogStatistics(
       Map<int, List<EnvironmentalDataPoint>> clusters,
       List<EnvironmentalDataPoint> noisePoints
       ) {
-    // Calculate statistics for each cluster
     clusters.forEach((clusterId, points) {
       final stats = _calculateClusterStats(points);
       logger.i('\nCluster $clusterId Analysis:');
       _logStats(stats, points.length);
     });
 
-    // Calculate statistics for noise points
     if (noisePoints.isNotEmpty) {
       final stats = _calculateClusterStats(noisePoints);
       logger.i('\nNoise Points Analysis:');
@@ -325,32 +352,30 @@ class BleController extends GetxController {
   Map<String, double> _calculateClusterStats(List<EnvironmentalDataPoint> points) {
     if (points.isEmpty) return {};
 
-    double meanVOC = points.map((p) => p.voc).reduce((a, b) => a + b) / points.length;
-    double meanTemp = points.map((p) => p.temperature).reduce((a, b) => a + b) / points.length;
-    double meanPressure = points.map((p) => p.pressure).reduce((a, b) => a + b) / points.length;
-    double meanHumidity = points.map((p) => p.humidity).reduce((a, b) => a + b) / points.length;
-
-    double stdVOC = _calculateStdDev(points.map((p) => p.voc).toList(), meanVOC);
-    double stdTemp = _calculateStdDev(points.map((p) => p.temperature).toList(), meanTemp);
-    double stdPressure = _calculateStdDev(points.map((p) => p.pressure).toList(), meanPressure);
-    double stdHumidity = _calculateStdDev(points.map((p) => p.humidity).toList(), meanHumidity);
-
-    return {
-      'avg_voc': meanVOC,
-      'std_voc': stdVOC,
-      'avg_temperature': meanTemp,
-      'std_temperature': stdTemp,
-      'avg_pressure': meanPressure,
-      'std_pressure': stdPressure,
-      'avg_humidity': meanHumidity,
-      'std_humidity': stdHumidity,
+    final stats = {
+      'avg_voc': _calculateMean(points.map((p) => p.voc)),
+      'avg_temperature': _calculateMean(points.map((p) => p.temperature)),
+      'avg_pressure': _calculateMean(points.map((p) => p.pressure)),
+      'avg_humidity': _calculateMean(points.map((p) => p.humidity)),
     };
+
+    stats.addAll({
+      'std_voc': _calculateStdDev(points.map((p) => p.voc), stats['avg_voc']!),
+      'std_temperature': _calculateStdDev(points.map((p) => p.temperature), stats['avg_temperature']!),
+      'std_pressure': _calculateStdDev(points.map((p) => p.pressure), stats['avg_pressure']!),
+      'std_humidity': _calculateStdDev(points.map((p) => p.humidity), stats['avg_humidity']!),
+    });
+
+    return stats;
   }
 
-  double _calculateStdDev(List<double> values, double mean) {
-    if (values.isEmpty) return 0.0;
-    num sumSquaredDiff = values.map((x) => pow(x - mean, 2)).reduce((a, b) => a + b);
-    return sqrt(sumSquaredDiff / values.length);
+  double _calculateMean(Iterable<double> values) {
+    return values.reduce((a, b) => a + b) / values.length;
+  }
+
+  double _calculateStdDev(Iterable<double> values, double mean) {
+    final squaredDiffs = values.map((x) => pow(x - mean, 2));
+    return sqrt(squaredDiffs.reduce((a, b) => a + b) / values.length);
   }
 
   void _logStats(Map<String, double> stats, int size) {
@@ -360,12 +385,22 @@ class BleController extends GetxController {
     logger.i('Pressure: ${stats['avg_pressure']?.toStringAsFixed(2)} ± ${stats['std_pressure']?.toStringAsFixed(2)} hPa');
     logger.i('Humidity: ${stats['avg_humidity']?.toStringAsFixed(2)} ± ${stats['std_humidity']?.toStringAsFixed(2)} %');
   }
-
-// Helper methods
-  void updateClusteringParameters({double? newEpsilon, int? newMinPoints}) {
-    if (newEpsilon != null) epsilon.value = newEpsilon;
-    if (newMinPoints != null) minPoints.value = newMinPoints;
-    runDBSCANAnalysis();
+  void clearData() {
+    environmentalDataPoints.clear();
+    clusterResults.clear();
+    noisePoints.clear();
+    vocData.clear();
+    tempData.clear();
+    humidityData.clear();
+    pressureData.clear();
+    airQualityVOC.value = 'VOC: 0 ppb';
+    temperature.value = 0.0;
+    humidity.value = 0.0;
+    pressure.value = 0.0;
+    batteryLevel.value = 0;
+    pmDetails.clear();
+    analysisError.value = '';
+    isAnalyzing.value = false;
   }
 
   Color getClusterColor(int clusterId) {
@@ -393,24 +428,6 @@ class BleController extends GetxController {
     }
   }
 
-  void clearData() {
-    environmentalDataPoints.clear();
-    clusterResults.clear();
-    noisePoints.clear();
-    vocData.clear();
-    tempData.clear();
-    humidityData.clear();
-    pressureData.clear();
-    airQualityVOC.value = 'VOC: 0 ppb';
-    temperature.value = 0.0;
-    humidity.value = 0.0;
-    pressure.value = 0.0;
-    batteryLevel.value = 0;
-    pmDetails.clear();
-    analysisError.value = '';
-    isAnalyzing.value = false;
-  }
-
   Map<String, double> getClusterStatistics(List<EnvironmentalDataPoint> points) {
     if (points.isEmpty) {
       return {
@@ -422,10 +439,10 @@ class BleController extends GetxController {
     }
 
     return {
-      'avgVoc': points.map((p) => p.voc).reduce((a, b) => a + b) / points.length,
-      'avgTemperature': points.map((p) => p.temperature).reduce((a, b) => a + b) / points.length,
-      'avgHumidity': points.map((p) => p.humidity).reduce((a, b) => a + b) / points.length,
-      'avgPressure': points.map((p) => p.pressure).reduce((a, b) => a + b) / points.length,
+      'avgVoc': _calculateMean(points.map((p) => p.voc)),
+      'avgTemperature': _calculateMean(points.map((p) => p.temperature)),
+      'avgHumidity': _calculateMean(points.map((p) => p.humidity)),
+      'avgPressure': _calculateMean(points.map((p) => p.pressure)),
     };
   }
 
@@ -449,7 +466,7 @@ class BleController extends GetxController {
       if (value > maxValue) maxValue = value;
     }
 
-    // Add some padding to the range
+    // Add padding to the range (10%)
     double padding = (maxValue - minValue) * 0.1;
     return {
       'min': minValue - padding,
@@ -475,7 +492,6 @@ class BleController extends GetxController {
       buffer.writeln('Average Humidity: ${stats['avgHumidity']?.toStringAsFixed(2)} %');
       buffer.writeln('Average Pressure: ${stats['avgPressure']?.toStringAsFixed(2)} hPa');
 
-      // Add time range information
       if (points.isNotEmpty) {
         var timeRange = _getClusterTimeRange(points);
         buffer.writeln('Time Range: ${timeRange['start']} to ${timeRange['end']}');
@@ -505,26 +521,6 @@ class BleController extends GetxController {
     };
   }
 
-  double _calculateCorrelation(List<double> x, List<double> y) {
-    if (x.length != y.length || x.isEmpty) return 0;
-
-    double meanX = x.reduce((a, b) => a + b) / x.length;
-    double meanY = y.reduce((a, b) => a + b) / y.length;
-
-    double covariance = 0;
-    double varX = 0;
-    double varY = 0;
-
-    for (int i = 0; i < x.length; i++) {
-      covariance += (x[i] - meanX) * (y[i] - meanY);
-      varX += (x[i] - meanX) * (x[i] - meanX);
-      varY += (y[i] - meanY) * (y[i] - meanY);
-    }
-
-    if (varX == 0 || varY == 0) return 0;
-    return covariance / (sqrt(varX * varY));
-  }
-
   Map<String, double> getFeatureCorrelations(List<EnvironmentalDataPoint> points) {
     if (points.length < 2) return {};
 
@@ -541,6 +537,26 @@ class BleController extends GetxController {
       'temperature_pressure': _calculateCorrelation(tempValues, pressureValues),
       'humidity_pressure': _calculateCorrelation(humidityValues, pressureValues),
     };
+  }
+
+  double _calculateCorrelation(List<double> x, List<double> y) {
+    if (x.length != y.length || x.isEmpty) return 0;
+
+    double meanX = _calculateMean(x);
+    double meanY = _calculateMean(y);
+
+    double covariance = 0;
+    double varX = 0;
+    double varY = 0;
+
+    for (int i = 0; i < x.length; i++) {
+      covariance += (x[i] - meanX) * (y[i] - meanY);
+      varX += (x[i] - meanX) * (x[i] - meanX);
+      varY += (y[i] - meanY) * (y[i] - meanY);
+    }
+
+    if (varX == 0 || varY == 0) return 0;
+    return covariance / (sqrt(varX * varY));
   }
 }
 
