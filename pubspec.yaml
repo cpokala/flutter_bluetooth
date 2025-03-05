@@ -9,7 +9,9 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  flutter_blue: ^0.8.0
+  flutter_localizations:
+    sdk: flutter
+  flutter_blue_plus: ^1.5.2
   get: ^4.6.1
   permission_handler: ^10.0.0
   logger: ^1.1.0
@@ -23,7 +25,6 @@ dependencies:
   http: ^1.1.0
   ml_algo: ^16.17.7
   path_provider: ^2.0.15
-
 
 dev_dependencies:
   flutter_test:
@@ -41,5 +42,4 @@ flutter:
 
 # Add this section to allow mixed mode compilation
 dependency_overrides:
-  dbscan:
-    ^0.1.1
+  dbscan: ^0.1.1

@@ -125,6 +125,61 @@ class DeviceDataScreenState extends State<DeviceDataScreen> {
     );
   }
 
+  Widget _buildConnectionStatus() {
+    return Obx(() {
+      final isConnected = widget.controller.connectedDevice != null;
+      final isConnecting = widget.controller.isConnecting.value;
+      final connectionError = widget.controller.connectionError.value;
+
+      return Card(
+        margin: const EdgeInsets.all(8),
+        color: isConnected ? Colors.green.shade50 : Colors.grey.shade100,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              Icon(
+                isConnected
+                    ? Icons.bluetooth_connected
+                    : (isConnecting ? Icons.bluetooth_searching : Icons.bluetooth_disabled),
+                color: isConnected
+                    ? Colors.green
+                    : (isConnecting ? Colors.blue : Colors.grey),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      isConnected
+                          ? 'Connected to ${widget.controller.connectedDevice?.platformName}'
+                          : (isConnecting ? 'Connecting...' : 'Disconnected'),
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    if (connectionError.isNotEmpty)
+                      Text(
+                        connectionError,
+                        style: const TextStyle(color: Colors.red, fontSize: 12),
+                      ),
+                  ],
+                ),
+              ),
+              if (isConnected)
+                TextButton.icon(
+                  icon: const Icon(Icons.bluetooth_disabled),
+                  label: const Text('Disconnect'),
+                  onPressed: () {
+                    widget.controller.disconnectDevice();
+                  },
+                ),
+            ],
+          ),
+        ),
+      );
+    });
+  }
+
   Widget _buildScatterPlot() {
     return Card(
       margin: const EdgeInsets.all(8.0),
@@ -383,35 +438,38 @@ class DeviceDataScreenState extends State<DeviceDataScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-          title: const Text('Air Quality Data'),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.share),
-              onPressed: () {
-                // Store context in a local variable
-                final scaffoldMessenger = ScaffoldMessenger.of(context);
-                final report = widget.controller.exportClusterData();
+        title: const Text('Air Quality Data'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.share),
+            onPressed: () {
+              // Store context in a local variable
+              final scaffoldMessenger = ScaffoldMessenger.of(context);
+              final report = widget.controller.exportClusterData();
 
-                // Use the stored context reference
-                Share.share(
-                  report,
-                  subject: 'Cluster Analysis Report ${DateTime.now().toString().split('.')[0]}',
-                ).catchError((error) {
-                  scaffoldMessenger.showSnackBar(
-                    SnackBar(
-                      content: Text('Failed to share report: $error'),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                  return null;
-                });
-              },
-            ),
-          ],
+              // Use the stored context reference
+              Share.share(
+                report,
+                subject: 'Cluster Analysis Report ${DateTime.now().toString().split('.')[0]}',
+              ).catchError((error) {
+                scaffoldMessenger.showSnackBar(
+                  SnackBar(
+                    content: Text('Failed to share report: $error'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+                return null;
+              });
+            },
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         child: Column(
           children: [
+            // Connection Status
+            _buildConnectionStatus(),
+
             // Current Values Section
             Card(
               margin: const EdgeInsets.all(8),

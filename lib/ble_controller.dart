@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_blue/flutter_blue.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:get/get.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:logger/logger.dart';
@@ -8,9 +8,8 @@ import 'dart:async';
 import 'dart:math';
 
 class BleController extends GetxController {
-  FlutterBlue ble = FlutterBlue.instance;
-  BluetoothDevice? connectedDevice;
   final logger = Logger();
+  BluetoothDevice? connectedDevice;
 
   // Observable variables for real-time data
   final airQualityVOC = RxString('VOC: 0 ppb');
@@ -39,6 +38,11 @@ class BleController extends GetxController {
   final selectedXAxis = 'voc'.obs;
   final selectedYAxis = 'temperature'.obs;
 
+  // Connection states
+  final isConnecting = false.obs;
+  final connectionError = RxString('');
+  final isScanning = false.obs;
+
   // Maximum number of data points to store
   static const int maxDataPoints = 1000;
 
@@ -57,11 +61,15 @@ class BleController extends GetxController {
   Stream<List<ScanResult>> get scanResults => _scanResultsController.stream;
   final List<ScanResult> _scanResultsList = [];
   Timer? pollingTimer;
+  StreamSubscription? _connectionStateSubscription;
+  int _reconnectAttempts = 0;
+  static const int maxReconnectAttempts = 3;
 
   @override
   void onClose() {
     _scanResultsController.close();
     pollingTimer?.cancel();
+    _connectionStateSubscription?.cancel();
     super.onClose();
   }
 
@@ -71,16 +79,41 @@ class BleController extends GetxController {
       return;
     }
 
-    if (await ble.isScanning.first) return;
+    // Check if scanning is already in progress
+    isScanning.value = true;
+    bool isCurrentlyScanning = await FlutterBluePlus.isScanning.first;
 
-    _scanResultsList.clear();
-    ble.scan(timeout: const Duration(seconds: 60)).listen((result) {
-      _scanResultsList.add(result);
+    if (isCurrentlyScanning) {
+      isScanning.value = false;
+      return;
+    }
+
+    try {
+      _scanResultsList.clear();
       _scanResultsController.add(_scanResultsList);
-    });
 
-    await Future.delayed(const Duration(seconds: 60));
-    ble.stopScan();
+      // Set up the scan results subscription
+      FlutterBluePlus.scanResults.listen((results) {
+        _scanResultsList.clear();
+        _scanResultsList.addAll(results);
+        _scanResultsController.add(_scanResultsList);
+      });
+
+      // Start scanning with a shorter timeout
+      await FlutterBluePlus.startScan(
+        timeout: const Duration(seconds: 15),
+      );
+
+      // Wait for the scan to complete
+      await Future.delayed(const Duration(seconds: 15));
+      if (FlutterBluePlus.isScanningNow) {
+        await FlutterBluePlus.stopScan();
+      }
+    } catch (e) {
+      logger.e("Error during scan: $e");
+    } finally {
+      isScanning.value = false;
+    }
   }
 
   Future<bool> _checkPermissions() async {
@@ -88,44 +121,132 @@ class BleController extends GetxController {
       Permission.bluetoothScan,
       Permission.bluetoothConnect,
       Permission.bluetooth,
+      Permission.location,
     ];
 
-    for (var permission in permissions) {
-      if (!await permission.request().isGranted) {
-        return false;
+    Map<Permission, PermissionStatus> statuses = await permissions.request();
+
+    bool allGranted = true;
+    statuses.forEach((permission, status) {
+      if (!status.isGranted) {
+        logger.w("Permission not granted: $permission");
+        allGranted = false;
       }
-    }
-    return true;
+    });
+
+    return allGranted;
   }
 
   Future<void> connectToDevice(BluetoothDevice device, BuildContext context) async {
-    connectedDevice = device;
-    var currentState = await device.state.first;
+    try {
+      isConnecting.value = true;
+      connectionError.value = '';
+      connectedDevice = device;
+      logger.d("Attempting to connect to device: ${device.platformName}");
 
-    if (currentState != BluetoothDeviceState.connected) {
-      try {
-        await device.connect(timeout: const Duration(seconds: 100));
-      } on TimeoutException {
-        logger.e("Connection timed out. Retrying...");
-        await device.disconnect();
+      // Cancel any existing subscription
+      _connectionStateSubscription?.cancel();
+
+      // Set up connection state listener before attempting connection
+      _connectionStateSubscription = device.connectionState.listen((BluetoothConnectionState state) {
+        logger.d("Connection state changed: $state");
+
+        if (state == BluetoothConnectionState.connected) {
+          logger.i("Device connected: ${device.platformName}");
+          _reconnectAttempts = 0;
+          connectionError.value = '';
+          _setupDevice(device);
+        } else if (state == BluetoothConnectionState.disconnected) {
+          logger.w("Device Disconnected");
+          stopPolling();
+
+          // Attempt to reconnect if not intentionally disconnected
+          if (_reconnectAttempts < maxReconnectAttempts && connectedDevice == device) {
+            _attemptReconnect(device);
+          }
+        }
+      });
+
+      // Check if already connected
+      if (device.isConnected) {
+        logger.i("Already connected to device");
+        _setupDevice(device);
         return;
       }
+
+      // Connect with shorter timeout
+      await device.connect(
+        timeout: const Duration(seconds: 15),
+        autoConnect: false,
+      );
+
+    } on TimeoutException {
+      logger.e("Connection timed out");
+      connectionError.value = 'Connection timed out';
+
+      try {
+        if (device.isConnected) {
+          await device.disconnect();
+        }
+      } catch (e) {
+        logger.e("Error during disconnect after timeout: $e");
+      }
+    } catch (e) {
+      logger.e("Error connecting to device: $e");
+      connectionError.value = 'Connection error: ${e.toString()}';
+
+      try {
+        if (device.isConnected) {
+          await device.disconnect();
+        }
+      } catch (disconnectError) {
+        logger.e("Error during disconnect after connection error: $disconnectError");
+      }
+    } finally {
+      isConnecting.value = false;
+    }
+  }
+
+  Future<void> _setupDevice(BluetoothDevice device) async {
+    // Wait a moment before proceeding
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    try {
+      // Request MTU to ensure robust data transfer
+      await device.requestMtu(512);
+      logger.d("Requested MTU size: 512");
+    } catch (e) {
+      logger.w("Error requesting MTU: $e");
+      // Continue anyway as this isn't critical
     }
 
-    device.state.listen((state) {
-      if (state == BluetoothDeviceState.connecting) {
-        logger.d("Device connecting to: ${device.name}");
-      } else if (state == BluetoothDeviceState.connected) {
-        logger.i("Device connected: ${device.name}");
-        startPolling();
-      } else {
-        logger.w("Device Disconnected");
-        stopPolling();
+    // Start data polling
+    startPolling();
+  }
+
+  Future<void> _attemptReconnect(BluetoothDevice device) async {
+    logger.i("Attempting to reconnect (${_reconnectAttempts + 1}/$maxReconnectAttempts)");
+    _reconnectAttempts++;
+
+    try {
+      await Future.delayed(const Duration(seconds: 2));
+      if (!device.isConnected) {
+        await device.connect(
+          timeout: const Duration(seconds: 10),
+          autoConnect: false,
+        );
       }
-    });
+    } catch (e) {
+      logger.e("Reconnection attempt failed: $e");
+      if (_reconnectAttempts >= maxReconnectAttempts) {
+        logger.e("Max reconnection attempts reached");
+        connectionError.value = 'Failed to reconnect after multiple attempts';
+      }
+    }
   }
 
   void startPolling() {
+    pollingTimer?.cancel();
     pollingTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
       logger.d("Polling data from BLE device...");
       pollDeviceForData();
@@ -134,11 +255,15 @@ class BleController extends GetxController {
 
   void stopPolling() {
     pollingTimer?.cancel();
+    pollingTimer = null;
     logger.d("Stopped polling.");
   }
 
   Future<void> pollDeviceForData() async {
-    if (connectedDevice == null) return;
+    if (connectedDevice == null || !connectedDevice!.isConnected) {
+      logger.w("Cannot poll: device is disconnected");
+      return;
+    }
 
     try {
       List<BluetoothService> services = await connectedDevice!.discoverServices();
@@ -370,10 +495,12 @@ class BleController extends GetxController {
   }
 
   double _calculateMean(Iterable<double> values) {
+    if (values.isEmpty) return 0.0;
     return values.reduce((a, b) => a + b) / values.length;
   }
 
   double _calculateStdDev(Iterable<double> values, double mean) {
+    if (values.isEmpty) return 0.0;
     final squaredDiffs = values.map((x) => pow(x - mean, 2));
     return sqrt(squaredDiffs.reduce((a, b) => a + b) / values.length);
   }
@@ -385,6 +512,19 @@ class BleController extends GetxController {
     logger.i('Pressure: ${stats['avg_pressure']?.toStringAsFixed(2)} ± ${stats['std_pressure']?.toStringAsFixed(2)} hPa');
     logger.i('Humidity: ${stats['avg_humidity']?.toStringAsFixed(2)} ± ${stats['std_humidity']?.toStringAsFixed(2)} %');
   }
+
+  Future<void> disconnectDevice() async {
+    if (connectedDevice != null) {
+      try {
+        stopPolling();
+        await connectedDevice!.disconnect();
+        connectedDevice = null;
+      } catch (e) {
+        logger.e("Error disconnecting device: $e");
+      }
+    }
+  }
+
   void clearData() {
     environmentalDataPoints.clear();
     clusterResults.clear();

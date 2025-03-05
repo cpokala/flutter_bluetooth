@@ -6,7 +6,8 @@ plugins {
 
 android {
     namespace = "com.example.flutter_bluetooth"
-    compileSdk = flutter.compileSdkVersion
+    // Lower compileSdk to be compatible with your current AGP version
+    compileSdk = 34
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -25,7 +26,8 @@ android {
     defaultConfig {
         applicationId = "com.example.flutter_bluetooth"
         minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        // Ensure targetSdk is also set to a compatible value
+        targetSdk = 33
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
@@ -58,6 +60,5 @@ configurations.all {
         if (details.requested.group == 'org.jetbrains.kotlin') {
             details.useVersion(kotlin_version)
         }
-        }
     }
-
+}
